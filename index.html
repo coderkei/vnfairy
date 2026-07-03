@@ -1,0 +1,477 @@
+<!--
+VNFairy Player Engine
+
+Copyright (C) 2026 coderkei and VNFairy Contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see https://www.gnu.org/licenses/
+
+VNFairy Special Exception:
+As a special exception, permission is granted to distribute copies of
+the VNFairy Player as part of visual novels exported or packaged using
+VNFairy, without causing the exported visual novel or its content to
+become subject to the GNU GPL.
+
+This exception applies only to unmodified copies of the VNFairy Player
+distributed as part of an exported visual novel. See LICENSE.txt for
+full terms.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VNFairy Player</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/common.css">
+  <link rel="stylesheet" href="css/engine.css">
+</head>
+<body>
+
+  <!-- Loading Screen -->
+  <div id="loader" class="loader-screen">
+    <div class="loader-content">
+      <div class="loader-spinner"></div>
+      <div class="loader-text">Loading Tale...</div>
+    </div>
+  </div>
+
+  <!-- Projects List Portal Splash Screen -->
+  <div id="projects-portal" class="fallback-screen hidden">
+    <div class="fallback-card glass-panel animate-scale" style="max-width: 650px; width: 90%;">
+      <h2>VNFairy Engine Portal</h2>
+      <p class="muted">Select a Visual Novel to play from the list below:</p>
+      
+      <div id="portal-projects-list" class="portal-list" style="margin: 20px 0; max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 6px;">
+        <!-- Injected project rows -->
+      </div>
+      
+      <div class="fallback-footer" style="display: flex; gap: 12px; justify-content: flex-end;">
+        <a href="/editor.html" class="btn-secondary" style="text-decoration: none; font-size: 0.9rem;">🧚‍♀️ Open Designer</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Standalone Load Fallback (For direct file:// access block) -->
+  <div id="fallback-loader" class="fallback-screen hidden">
+    <div class="fallback-card glass-panel animate-scale">
+      <h2>VNFairy Player</h2>
+      <p>Browser security blocks loading local files directly via <code>file://</code>.</p>
+      <div class="drop-zone" id="drop-zone">
+        <p>Drag & Drop your <code>project.json</code> here</p>
+        <span class="muted">or</span>
+        <button class="btn-primary" onclick="document.getElementById('project-file-input').click()">Browse File</button>
+        <input type="file" id="project-file-input" accept=".json" class="hidden">
+      </div>
+      <div class="fallback-footer">
+        <button class="btn-secondary" id="btn-run-demo">Run Demo Project</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game Container -->
+  <div id="game-container" class="hidden">
+    
+    <!-- Click to Start Screen Overlay -->
+    <div id="start-click-overlay" class="start-click-overlay hidden">
+      <div class="start-click-content">
+        <div class="start-click-prompt">Click to Start</div>
+      </div>
+    </div>
+    
+    <!-- Title Screen -->
+    <div id="title-screen" class="title-screen-container hidden">
+      <div class="title-bg" id="title-bg"></div>
+      <div class="title-overlay"></div>
+      <div class="title-content animate-fade">
+        <h1 id="game-title">Visual Novel Title</h1>
+        <p id="game-author" class="game-author">by Author</p>
+        
+        <div class="title-menu" id="title-menu">
+          <button class="btn-title" id="btn-new-game">New Game</button>
+          <button class="btn-title" id="btn-open-load">Load Game</button>
+          <button class="btn-title hidden" id="btn-open-gallery-new">Gallery</button>
+          <button class="btn-title hidden" id="btn-open-music">Music</button>
+          <button class="btn-title" id="btn-open-gallery">Achievements</button>
+          <button class="btn-title" id="btn-open-options">Options</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gameplay Stage -->
+    <div id="stage-screen" class="stage-screen-container hidden">
+      <!-- Background Layer -->
+      <div class="stage-bg" id="stage-bg"></div>
+      <div class="stage-bg-transition" id="stage-bg-trans"></div>
+      
+      <!-- Playtest Debug Overlay -->
+      <div id="playtest-debug-container" class="hidden" style="position: absolute; top: 12px; right: 12px; z-index: 1000; font-family: var(--font-sans);">
+        <button id="playtest-debug-btn" style="background: var(--bg-panel, rgba(10, 14, 23, 0.85)); backdrop-filter: blur(8px); border: 1px solid var(--border-color); color: #ef4444; font-weight: 700; padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; font-size: 0.8rem; display: flex; align-items: center; gap: 6px;">
+          🐞 Debug
+        </button>
+        <div id="playtest-debug-panel" class="hidden glass-panel" style="position: absolute; top: 38px; right: 0; width: 280px; background: var(--bg-card, rgba(15, 23, 42, 0.95)); border: 1px solid var(--border-color); border-radius: var(--radius-md); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); padding: 14px; display: flex; flex-direction: column; gap: 10px; max-height: 500px; overflow: hidden; pointer-events: auto; color: var(--text-main, #fff);">
+          <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+            <span style="font-weight: 700; color: #ef4444; font-size: 0.9rem;">Playtest Debug Panel</span>
+            <button id="playtest-debug-close" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.1rem; padding: 0 4px;">&times;</button>
+          </div>
+          <button id="playtest-debug-unlock-btn" style="width: 100%; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #6ee7b7; padding: 8px; border-radius: var(--radius-sm); font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.2s;">
+            🔓 Unlock All Gallery & Endings
+          </button>
+          <div style="display: flex; flex-direction: column; gap: 4px; flex-grow: 1; overflow: hidden;">
+            <label style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Jump to Scene</label>
+            <input type="text" id="playtest-debug-search" placeholder="Search scenes..." style="width: 100%; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: var(--radius-sm); color: var(--text-main, #fff); padding: 6px 10px; font-size: 0.8rem; outline: none; box-sizing: border-box;">
+            <div id="playtest-debug-scenes-list" style="margin-top: 6px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; max-height: 140px; padding-right: 4px;">
+              <!-- scene list items injected here -->
+            </div>
+            
+            <label style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 8px;">Active Variables</label>
+            <div id="playtest-debug-variables-list" style="margin-top: 4px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; max-height: 110px; padding-right: 4px; font-family: monospace; font-size: 0.75rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 6px; background: rgba(0,0,0,0.2);">
+              <span style="color:var(--text-muted); font-style:italic;">No variables tracked yet</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Character Layer -->
+      <div class="character-stage" id="character-stage">
+        <div class="char-slot left" id="char-left">
+          <img class="char-sprite" src="" alt="">
+        </div>
+        <div class="char-slot center" id="char-center">
+          <img class="char-sprite" src="" alt="">
+        </div>
+        <div class="char-slot right" id="char-right">
+          <img class="char-sprite" src="" alt="">
+        </div>
+      </div>
+
+      <!-- Video Cutscene Layer -->
+      <div class="stage-video-container hidden" id="stage-video-container">
+        <video id="stage-video" playsinline></video>
+        <button class="video-skip-btn" id="video-skip-btn">Skip</button>
+      </div>
+
+      <!-- Fullscreen Text Cutscene Layer -->
+      <div class="stage-fullscreen-text-container hidden" id="stage-fullscreen-text-container">
+        <div class="fullscreen-text-content" id="fullscreen-text-content"></div>
+      </div>
+
+      <!-- Option Branching Overlay -->
+      <div class="choices-overlay hidden" id="choices-overlay">
+        <div class="choices-container animate-slide" id="choices-container">
+          <!-- Choice buttons injected here -->
+        </div>
+      </div>
+
+      <!-- Dialogue HUD -->
+      <div class="hud-container" id="hud-container">
+        <!-- Dialogue Box -->
+        <div class="dialogue-box glass-panel" id="dialogue-box">
+          <div class="speaker-name-container" id="speaker-container">
+            <span class="speaker-name" id="speaker-name">Fairy</span>
+          </div>
+          <div class="dialogue-text-container">
+            <p class="dialogue-text" id="dialogue-text">Dialogue text goes here...</p>
+            <div class="dialogue-arrow" id="dialogue-arrow"></div>
+          </div>
+        </div>
+
+        <!-- Quick Menu -->
+        <div class="quick-menu">
+          <button class="btn-quick" id="btn-quick-history">History</button>
+          <button class="btn-quick" id="btn-quick-auto">Auto</button>
+          <button class="btn-quick" id="btn-quick-skip">Skip</button>
+          <button class="btn-quick" id="btn-quick-save">Save</button>
+          <button class="btn-quick" id="btn-quick-load">Load</button>
+          <button class="btn-quick" id="btn-quick-qsave">Q.Save</button>
+          <button class="btn-quick" id="btn-quick-qload">Q.Load</button>
+          <button class="btn-quick" id="btn-quick-options">Settings</button>
+          <button class="btn-quick" id="btn-quick-title">Title</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Full-screen Save / Load Screen -->
+    <div id="save-load-screen" class="save-load-screen-container hidden">
+      <div class="save-load-header">
+        <h1 class="save-load-title-text" id="save-load-title">SAVE GAME</h1>
+        <div style="flex: 1;"></div>
+      </div>
+      
+      <!-- Save grid with left/right page navigation -->
+      <div class="save-grid-wrapper">
+        <button class="btn-page-nav prev" id="btn-save-prev">&#9664;</button>
+        <div class="save-display-grid" id="save-display-grid">
+          <!-- Save slot cards generated dynamically -->
+        </div>
+        <button class="btn-page-nav next" id="btn-save-next">&#9654;</button>
+      </div>
+
+      <!-- Save Details Info Box (At the bottom) -->
+      <div class="save-details-panel" id="save-details-panel">
+        <div class="save-details-empty">Hover over a save slot to view details</div>
+      </div>
+      
+      <div class="save-load-bottom-bar">
+        <button class="btn-gallery-bottom" id="btn-save-delete" disabled style="opacity: 0.3; cursor: not-allowed;">
+          <span class="btn-shortcut-key">d</span> Delete
+        </button>
+        <div style="flex: 1;"></div>
+        <div class="save-page-indicator" id="save-page-indicator">1 / 1</div>
+        <div style="flex: 1;"></div>
+        <button class="btn-gallery-bottom" id="btn-save-load-close">
+          <span class="btn-shortcut-key">x</span> Close
+        </button>
+      </div>
+    </div>
+
+    <!-- Full-screen Options Screen -->
+    <div id="options-screen" class="options-screen-container hidden">
+      <div class="options-header">
+        <h1 class="options-title-text">OPTIONS</h1>
+        <div style="flex: 1;"></div>
+      </div>
+      
+      <div class="options-body-layout">
+        <!-- Settings Column -->
+        <div class="options-settings-col">
+          <div class="setting-item-full">
+            <label for="slider-text-speed">Text Speed</label>
+            <div class="slider-container-full">
+              <input type="range" id="slider-text-speed" min="10" max="100" value="50">
+              <span class="slider-value-full" id="val-text-speed">Normal</span>
+            </div>
+          </div>
+          
+          <div class="setting-item-full">
+            <label for="slider-music-vol">Music Volume</label>
+            <div class="slider-container-full">
+              <input type="range" id="slider-music-vol" min="0" max="100" value="70">
+              <span class="slider-value-full" id="val-music-vol">70%</span>
+            </div>
+          </div>
+          
+          <div class="setting-item-full">
+            <label for="slider-sfx-vol">Sound Volume</label>
+            <div class="slider-container-full">
+              <input type="range" id="slider-sfx-vol" min="0" max="100" value="70">
+              <span class="slider-value-full" id="val-sfx-vol">70%</span>
+            </div>
+          </div>
+          
+          <div class="setting-item-full">
+            <label>Dialogue Text Size</label>
+            <div class="radio-group-full">
+              <label class="radio-label-full" style="cursor:pointer;">
+                <input type="radio" name="text-size" id="text-size-small" value="small"> Small
+              </label>
+              <label class="radio-label-full" style="cursor:pointer;">
+                <input type="radio" name="text-size" id="text-size-medium" value="medium" checked> Medium
+              </label>
+              <label class="radio-label-full" style="cursor:pointer;">
+                <input type="radio" name="text-size" id="text-size-large" value="large"> Large
+              </label>
+            </div>
+          </div>
+
+          <div class="setting-item-full">
+            <label>Skip Speed</label>
+            <div class="radio-group-full">
+              <label class="radio-label-full" style="cursor:pointer;">
+                <input type="radio" name="skip-speed" id="skip-speed-slow" value="slow"> Slow
+              </label>
+              <label class="radio-label-full" style="cursor:pointer;">
+                <input type="radio" name="skip-speed" id="skip-speed-medium" value="medium" checked> Medium
+              </label>
+              <label class="radio-label-full" style="cursor:pointer;">
+                <input type="radio" name="skip-speed" id="skip-speed-fast" value="fast"> Fast
+              </label>
+            </div>
+          </div>
+
+          <div class="setting-item-full">
+            <label>Screen Mode</label>
+            <div class="toggle-group-full">
+              <button class="btn-toggle-full" id="btn-screen-window">Window</button>
+              <button class="btn-toggle-full" id="btn-screen-fullscreen">Full Screen</button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Keyboard Controls Help Column -->
+        <div class="options-controls-col">
+          <h3>Keyboard Controls</h3>
+          <ul class="controls-help-list">
+            <li><span class="key-badge">Space</span> / <span class="key-badge">Enter</span> Advance Dialogue</li>
+            <li><span class="key-badge">Arrow Up</span> / <span class="key-badge">Page Up</span> Dialogue History</li>
+            <li><span class="key-badge">Ctrl</span> Skip Dialogue (Fast Forward)</li>
+            <li><span class="key-badge">A</span> Toggle Auto Play</li>
+            <li><span class="key-badge">H</span> Hide Dialogue HUD</li>
+            <li><span class="key-badge">W</span> Select Music (in Gallery)</li>
+            <li><span class="key-badge">X</span> Back / Close (in menus)</li>
+          </ul>
+        </div>
+      </div>
+      
+      <div class="options-bottom-bar">
+        <button class="btn-gallery-bottom" id="btn-options-defaults">
+          <span class="btn-shortcut-key">w</span> Defaults
+        </button>
+        <button class="btn-gallery-bottom" id="btn-options-close">
+          <span class="btn-shortcut-key">x</span> Close
+        </button>
+      </div>
+    </div>
+
+    <!-- Full-screen Credits Screen -->
+    <div id="credits-screen" class="credits-screen-container hidden">
+      <div class="credits-bg" id="credits-bg"></div>
+      <div class="credits-overlay"></div>
+      <button class="btn-skip-credits" id="btn-skip-credits">Skip Credits ➔</button>
+      <div class="credits-viewport">
+        <div class="credits-roll" id="credits-roll">
+          <!-- Rolling credits content here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- History Log Modal -->
+    <div class="modal hidden" id="history-modal">
+      <div class="modal-backdrop" onclick="closeModal('history-modal')"></div>
+      <div class="modal-content glass-panel animate-scale">
+        <div class="modal-header">
+          <h2>Dialogue History</h2>
+          <button class="modal-close" onclick="closeModal('history-modal')">&times;</button>
+        </div>
+        <div class="modal-body history-body" id="history-body">
+          <div class="history-list" id="history-list">
+            <!-- Log entries injected here -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Full-screen Achievements Screen -->
+    <div id="achievements-screen" class="achievements-screen-container hidden">
+      <div class="achievements-header">
+        <h1 class="achievements-title-text">ACHIEVEMENTS</h1>
+        <div style="flex: 1;"></div>
+      </div>
+      
+      <div class="achievements-grid-wrapper">
+        <div class="gallery-grid" id="gallery-grid">
+          <!-- Achievements list injected here -->
+        </div>
+      </div>
+      
+      <div class="achievements-bottom-bar">
+        <div style="flex: 1;"></div>
+        <button class="btn-gallery-bottom" id="btn-achievements-close">
+          <span class="btn-shortcut-key">x</span> Close
+        </button>
+      </div>
+    </div>
+
+    <!-- Full-screen Gallery Screen -->
+    <div id="gallery-screen" class="gallery-screen-container hidden">
+      <div class="gallery-header">
+        <h1 class="gallery-title-text">GALLERY</h1>
+        <div class="completion-pill">Completion Rate <span id="gallery-completion-rate">0%</span></div>
+      </div>
+      
+      <!-- Section Tabs -->
+      <div class="gallery-tabs-container" id="gallery-tabs-container">
+        <button class="btn-gallery-tab active" id="btn-gallery-chars">Characters</button>
+        <button class="btn-gallery-tab" id="btn-gallery-bgs">Backgrounds</button>
+      </div>
+      
+      <!-- Grid layout -->
+      <div class="gallery-grid-wrapper">
+        <button class="btn-page-nav prev" id="btn-gallery-prev">&#9664;</button>
+        <div class="gallery-display-grid" id="gallery-display-grid">
+          <!-- Grid cards generated dynamically -->
+        </div>
+        <button class="btn-page-nav next" id="btn-gallery-next">&#9654;</button>
+      </div>
+      
+      <!-- Bottom bar -->
+      <div class="gallery-bottom-bar">
+        <button class="btn-gallery-bottom" id="btn-gallery-select-music">
+          <span class="btn-shortcut-key">w</span> Select Music
+        </button>
+        <div class="gallery-page-indicator" id="gallery-page-indicator">1 / 1</div>
+        <button class="btn-gallery-bottom" id="btn-gallery-back">
+          <span class="btn-shortcut-key">x</span> Back
+        </button>
+      </div>
+    </div>
+
+    <!-- Full-screen Music Screen -->
+    <div id="music-screen" class="music-screen-container hidden">
+      <div class="music-header">
+        <h1 class="music-title-text">MUSIC</h1>
+        <div class="completion-pill">Completion Rate <span id="music-completion-rate">0%</span></div>
+      </div>
+      
+      <!-- Grid layout -->
+      <div class="music-grid-wrapper">
+        <button class="btn-page-nav prev" id="btn-music-prev">&#9664;</button>
+        <div class="music-display-grid" id="music-display-grid">
+          <!-- Music buttons generated dynamically -->
+        </div>
+        <button class="btn-page-nav next" id="btn-music-next">&#9654;</button>
+      </div>
+      
+      <!-- Bottom bar -->
+      <div class="music-bottom-bar">
+        <div style="flex: 1;"></div>
+        <div class="music-page-indicator" id="music-page-indicator">1 / 1</div>
+        <button class="btn-gallery-bottom" id="btn-music-close">
+          <span class="btn-shortcut-key">x</span> Close
+        </button>
+      </div>
+    </div>
+
+    <!-- Gallery Full Screen Preview Overlay -->
+    <div id="gallery-preview-overlay" class="gallery-preview-overlay hidden">
+      <img id="gallery-preview-img" src="" alt="Full Screen Preview">
+      <button class="gallery-preview-close-btn" id="btn-gallery-preview-close">&times;</button>
+    </div>
+
+    <!-- Custom Confirmation Modal -->
+    <div id="confirm-modal" class="confirm-modal-overlay hidden">
+      <div class="confirm-modal-box glass-panel animate-scale">
+        <div class="confirm-modal-body" id="confirm-modal-message">
+          Are you sure you want to perform this action?
+        </div>
+        <div class="confirm-modal-buttons">
+          <button class="btn-confirm-yes" id="btn-confirm-yes">Yes</button>
+          <button class="btn-confirm-no" id="btn-confirm-no">No</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden">Game Saved!</div>
+
+    <!-- Fade Overlay -->
+    <div id="fade-overlay" class="fade-overlay hidden"></div>
+  </div>
+
+  <script src="data/project.js" onerror="console.log('Not a packaged offline run')"></script>
+  <script src="js/engine.js"></script>
+</body>
+</html>

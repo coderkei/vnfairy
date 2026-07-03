@@ -1,0 +1,4 @@
+data
+*.zip
+node_modules
+.agents

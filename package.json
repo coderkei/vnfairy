@@ -1,0 +1,20 @@
+{
+  "name": "vnfairy",
+  "version": "1.0.0",
+  "description": "Lightweight, beautiful visual novel engine and visual designer.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16"
+  },
+  "keywords": [
+    "visual-novel",
+    "vn-engine",
+    "game-editor",
+    "html5"
+  ],
+  "author": "coderkei",
+  "license": "GPL-3.0-or-later with VNFairy LICENSE EXCEPTIONS AND ADDITIONAL TERMS Version 1.0"
+}
