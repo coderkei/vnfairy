@@ -1006,7 +1006,8 @@ body {
   background: var(--primary-glow);
 }
 .shortcut-hint,
-.keyboard-help .keyboard-key {
+.keyboard-help .keyboard-key,
+.script-shortcut-row .keyboard-key {
   display: inline-flex;
   align-items: center;
   min-height: 18px;
@@ -1051,6 +1052,18 @@ body {
   color: var(--text-muted);
   font-size: 0.7rem;
   white-space: nowrap;
+}
+.keyboard-help-configure {
+  border: 0;
+  padding: 0;
+  color: var(--primary);
+  background: transparent;
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.keyboard-help-configure:hover {
+  text-decoration: underline;
 }
 .story-search-panel,
 .preset-panel {
@@ -1340,6 +1353,58 @@ body {
   border-color: var(--danger);
   background: rgba(239, 68, 68, 0.08);
 }
+.script-shortcuts-modal-content {
+  width: min(560px, 92vw);
+  max-width: none;
+}
+.script-shortcuts-modal-content .modal-header {
+  align-items: flex-start;
+  gap: 18px;
+}
+.script-shortcuts-modal-content .modal-header h2 {
+  margin: 0;
+}
+.script-shortcuts-modal-content .modal-header p {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+}
+.script-shortcuts-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.script-shortcuts-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+.script-shortcut-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.script-shortcut-row .keyboard-key {
+  justify-content: center;
+  min-width: 43px;
+}
+.script-shortcut-row .select-input {
+  min-width: 0;
+  width: 100%;
+  font-size: 0.78rem;
+}
+.script-shortcuts-note {
+  margin: 0;
+  font-size: 0.75rem;
+}
+.script-shortcuts-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+}
 @media (max-width: 1180px) {
   .keyboard-help { display: none; }
   .preset-grid { grid-template-columns: 1fr; }
@@ -1356,6 +1421,7 @@ body {
   .script-line .script-speaker { grid-column: 3 / -1; }
   .script-line-text { grid-column: 3 / -1; }
   .script-line-actions { grid-column: 4; grid-row: 1; flex-direction: column; }
+  .script-shortcuts-list { grid-template-columns: 1fr; }
 }
 
 /* Dialogue Timeline stream styling */

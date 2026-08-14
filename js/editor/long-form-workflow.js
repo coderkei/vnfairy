@@ -23,12 +23,26 @@
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
   }
 
-  function speakerOptions(editor, selected) {
-    const options = [{ id: 'narrator', name: 'Narrator', shortcut: 'Alt+1' }];
-    (editor.project.assets && editor.project.assets.characters || []).forEach((character, index) => {
-      options.push({ id: character.id, name: character.name || character.id, shortcut: `Alt+${index + 2}` });
+  const SCRIPT_SHORTCUT_COUNT = 9;
+
+  function allSpeakerOptions(editor, selected) {
+    const options = [{ id: 'narrator', name: 'Narrator' }];
+    (editor.project.assets && editor.project.assets.characters || []).forEach(character => {
+      options.push({ id: character.id, name: character.name || character.id });
     });
-    return options.map(option => ({ ...option, selected: option.id === selected }));
+    const shortcuts = editor.getScriptSpeakerShortcuts ? editor.getScriptSpeakerShortcuts() : [];
+    return options.map(option => {
+      const shortcutIndex = shortcuts.indexOf(option.id);
+      return {
+        ...option,
+        shortcut: shortcutIndex >= 0 ? `Alt+${shortcutIndex + 1}` : '',
+        selected: option.id === selected
+      };
+    });
+  }
+
+  function speakerOptions(editor, selected) {
+    return allSpeakerOptions(editor, selected);
   }
 
   function escapeSelectorValue(value) {
@@ -37,6 +51,7 @@
 
   proto.ensureLongFormModel = function () {
     if (!this.project) return;
+    this.project.config = this.project.config || {};
     this.project.presets = this.project.presets || {};
     this.project.presets.scenes = Array.isArray(this.project.presets.scenes) ? this.project.presets.scenes : [];
     this.project.presets.dialogueLayouts = Array.isArray(this.project.presets.dialogueLayouts) ? this.project.presets.dialogueLayouts : [];
@@ -59,6 +74,22 @@
     const validIds = new Set();
     Object.values(this.project.scenes).forEach(scene => (scene.dialogue || []).forEach(step => step && step.id && validIds.add(step.id)));
     this.selectedDialogueIds = new Set([...this.selectedDialogueIds].filter(id => validIds.has(id)));
+  };
+
+  proto.getScriptSpeakerShortcuts = function () {
+    if (!this.project) return Array(SCRIPT_SHORTCUT_COUNT).fill('');
+    const characters = this.project.assets && Array.isArray(this.project.assets.characters)
+      ? this.project.assets.characters
+      : [];
+    const validIds = new Set(['narrator', ...characters.map(character => character.id).filter(Boolean)]);
+    const defaults = ['narrator', ...characters.map(character => character.id).filter(Boolean)]
+      .slice(0, SCRIPT_SHORTCUT_COUNT);
+    const configured = this.project.config && this.project.config.scriptSpeakerShortcuts;
+    const source = Array.isArray(configured) ? configured : defaults;
+    return Array.from({ length: SCRIPT_SHORTCUT_COUNT }, (_, index) => {
+      const speakerId = source[index] || '';
+      return validIds.has(speakerId) ? speakerId : '';
+    });
   };
 
   proto.getActiveWritingScene = function () {
@@ -150,7 +181,7 @@
     const helper = document.querySelector('.keyboard-help');
     if (!helper || !this.project) return;
     helper.innerHTML = '';
-    [['Enter', 'next line'], ['Tab', 'next field']].concat(speakerOptions(this).slice(0, 3).map(option => [option.shortcut, option.name])).forEach(([key, label]) => {
+    [['Enter', 'next line'], ['Tab', 'next field'], ['Alt+1–9', 'speaker shortcuts']].forEach(([key, label]) => {
       const keyElement = document.createElement('span');
       keyElement.className = 'keyboard-key';
       keyElement.textContent = key;
@@ -159,6 +190,68 @@
       labelElement.textContent = label;
       helper.append(keyElement, labelElement);
     });
+    const configureButton = document.createElement('button');
+    configureButton.type = 'button';
+    configureButton.className = 'keyboard-help-configure';
+    configureButton.id = 'btn-configure-script-shortcuts';
+    configureButton.textContent = 'Configure';
+    configureButton.onclick = () => this.openScriptShortcutModal();
+    helper.appendChild(configureButton);
+  };
+
+  proto.renderScriptShortcutModal = function () {
+    const list = document.getElementById('script-shortcuts-list');
+    if (!list || !this.project) return;
+    const shortcuts = this.getScriptSpeakerShortcuts();
+    const options = allSpeakerOptions(this);
+    list.innerHTML = '';
+    for (let index = 0; index < SCRIPT_SHORTCUT_COUNT; index += 1) {
+      const row = document.createElement('label');
+      row.className = 'script-shortcut-row';
+
+      const key = document.createElement('span');
+      key.className = 'keyboard-key';
+      key.textContent = `Alt+${index + 1}`;
+
+      const select = document.createElement('select');
+      select.className = 'select-input';
+      select.dataset.shortcutSlot = String(index);
+      select.setAttribute('aria-label', `Speaker for Alt+${index + 1}`);
+
+      const empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = 'Unassigned';
+      select.appendChild(empty);
+      options.forEach(option => {
+        const item = document.createElement('option');
+        item.value = option.id;
+        item.textContent = option.name;
+        item.selected = option.id === shortcuts[index];
+        select.appendChild(item);
+      });
+      row.append(key, select);
+      list.appendChild(row);
+    }
+  };
+
+  proto.openScriptShortcutModal = function () {
+    this.renderScriptShortcutModal();
+    document.getElementById('script-shortcuts-modal')?.classList.remove('hidden');
+  };
+
+  proto.saveScriptShortcutConfig = function () {
+    const list = document.getElementById('script-shortcuts-list');
+    if (!list || !this.project) return;
+    const values = Array.from(list.querySelectorAll('select[data-shortcut-slot]'))
+      .sort((a, b) => Number(a.dataset.shortcutSlot) - Number(b.dataset.shortcutSlot))
+      .map(select => select.value || '');
+    this.project.config = this.project.config || {};
+    this.project.config.scriptSpeakerShortcuts = Array.from({ length: SCRIPT_SHORTCUT_COUNT }, (_, index) => values[index] || '');
+    this.triggerAutoSave();
+    this.renderWritingKeyboardHelp();
+    this.renderScriptBulkSpeakerOptions();
+    if (this.dialogueView === 'script') this.renderScriptView();
+    document.getElementById('script-shortcuts-modal')?.classList.add('hidden');
   };
 
   proto.setDialogueView = function (view) {
@@ -196,7 +289,7 @@
     speakerOptions(this).forEach(option => {
       const item = document.createElement('option');
       item.value = option.id;
-      item.textContent = `${option.name} · ${option.shortcut}`;
+      item.textContent = option.shortcut ? `${option.name} · ${option.shortcut}` : option.name;
       select.appendChild(item);
     });
     select.value = current;
@@ -243,7 +336,7 @@
       speaker.className = 'select-input script-speaker';
       speaker.setAttribute('data-asset-type', 'speaker');
       speaker.setAttribute('aria-label', `Speaker for line ${index + 1}`);
-      speaker.title = 'Speaker (Alt+1, Alt+2...)';
+      speaker.title = 'Speaker (use your configured Alt+number shortcut)';
       speakerOptions(this, step.speaker || 'narrator').forEach(option => {
         const item = document.createElement('option');
         item.value = option.id;
@@ -329,10 +422,10 @@
     }
     if (event.altKey && /^\d$/.test(event.key)) {
       const shortcutIndex = Number(event.key) - 1;
-      const option = speakerOptions(this)[shortcutIndex];
-      if (!option) return;
+      const speakerId = this.getScriptSpeakerShortcuts()[shortcutIndex];
+      if (!speakerId) return;
       event.preventDefault();
-      this.updateDialogueById(lineId, { speaker: option.id });
+      this.updateDialogueById(lineId, { speaker: speakerId });
     }
   };
 
@@ -759,6 +852,8 @@
     };
     bind('btn-dialogue-cards-view', 'onclick', () => this.setDialogueView('cards'));
     bind('btn-dialogue-script-view', 'onclick', () => this.setDialogueView('script'));
+    bind('btn-configure-script-shortcuts', 'onclick', () => this.openScriptShortcutModal());
+    bind('btn-save-script-shortcuts', 'onclick', () => this.saveScriptShortcutConfig());
     bind('btn-story-search', 'onclick', () => this.toggleStorySearch());
     bind('btn-writing-presets', 'onclick', () => document.getElementById('preset-panel')?.classList.toggle('hidden'));
     bind('btn-duplicate-scene', 'onclick', () => this.duplicateScene(this.activeSceneId));

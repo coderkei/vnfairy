@@ -1882,6 +1882,29 @@ class VNFairyEngine {
   }
 
   // Save/Load Mechanics
+  getSavePreviewCharacters() {
+    const slots = [
+      ['left', document.getElementById('char-left')],
+      ['center', document.getElementById('char-center')],
+      ['right', document.getElementById('char-right')]
+    ];
+    return slots.reduce((characters, [position, slot]) => {
+      if (!slot || !slot.classList.contains('active-slot')) return characters;
+      const image = slot.querySelector('.char-sprite');
+      const path = image && image.getAttribute('src');
+      if (!path) return characters;
+      const scaleMatch = String(image.style.transform || '').match(/scale\(\s*([\d.]+)\s*\)/i);
+      const scale = scaleMatch ? Number(scaleMatch[1]) : 1;
+      characters.push({
+        position,
+        path,
+        scale: Number.isFinite(scale) && scale > 0 ? scale : 1,
+        dimmed: slot.classList.contains('speaking-dimmed')
+      });
+      return characters;
+    }, []);
+  }
+
   getGameState() {
     let bgSrc = "";
     let dialogueText = "";
@@ -1910,7 +1933,8 @@ class VNFairyEngine {
       preview: {
         bg: bgSrc,
         text: dialogueText.substring(0, 60) + (dialogueText.length > 60 ? "..." : ""),
-        sceneName: sceneName
+        sceneName: sceneName,
+        characters: this.getSavePreviewCharacters()
       }
     };
   }
@@ -2830,10 +2854,30 @@ class VNFairyEngine {
 
       if (slot) {
         card.classList.add('has-save');
-        if (slot.preview && slot.preview.bg) {
-          card.style.backgroundImage = `url('${slot.preview.bg}')`;
-        } else {
+        const preview = slot.preview || {};
+        const previewCharacters = Array.isArray(preview.characters) ? preview.characters : [];
+        if (preview.bg) {
+          card.style.backgroundImage = `url('${preview.bg}')`;
+        } else if (!previewCharacters.length) {
           card.innerHTML += `<div class="save-slot-empty-label">SAVED</div>`;
+        }
+        if (previewCharacters.length) {
+          const characterLayer = document.createElement('div');
+          characterLayer.className = 'save-slot-character-preview';
+          previewCharacters.forEach(character => {
+            if (!character || !['left', 'center', 'right'].includes(character.position) || !character.path) return;
+            const characterSlot = document.createElement('div');
+            characterSlot.className = `save-slot-character-slot ${character.position}${character.dimmed ? ' is-dimmed' : ''}`;
+            const image = document.createElement('img');
+            image.className = 'save-slot-character';
+            image.src = character.path;
+            image.alt = '';
+            const scale = Number(character.scale);
+            image.style.transform = `scale(${Number.isFinite(scale) && scale > 0 ? scale : 1})`;
+            characterSlot.appendChild(image);
+            characterLayer.appendChild(characterSlot);
+          });
+          if (characterLayer.childElementCount) card.appendChild(characterLayer);
         }
 
         // Top-right delete cross button
