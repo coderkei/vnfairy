@@ -1,109 +1,128 @@
 # VNFairy
 
-**A lightweight, beautiful visual novel engine and designer — built entirely in HTML5 & Node.js.**
+**A lightweight visual novel engine and designer built with HTML5 and Node.js.**
+
+VNFairy lets you create, design, play, and package visual novels in your browser. It includes a visual authoring workspace, a complete HTML5 player, and a small local server for project storage and exports.
 
 **Current release: 2.0.0**
 
-VNFairy lets you create, design, and play visual novels right in your browser. It comes with a fully-featured visual designer and HTML5 playback engine powered by a small local Node.js server.
-
-**Transparency:** This project was developed with assistance from AI language models. Some parts of the source code were generated or refined using AI, with all generated code reviewed, modified, and integrated by the project author where appropriate. This notice is provided in the interest of transparency.
-
----
+[Open the visual docs](docs/index.html) · [Download a release](https://github.com/coderkei/VNFairy/releases) · [Report an issue](https://github.com/coderkei/VNFairy/issues)
 
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/title.png" width="48%" alt="Title Screen" />
-  <img src="screenshots/vn1.png" width="48%" alt="Visual Novel Playback" />
+  <img src="screenshots/title.png" width="48%" alt="Haruka Days title screen in the VNFairy player" />
+  <img src="screenshots/vn1.png" width="48%" alt="Visual novel playback with dialogue and quick controls" />
 </p>
 <p align="center">
-  <img src="screenshots/designer.png" width="48%" alt="Visual Novel Designer" />
-  <img src="screenshots/char.png" width="48%" alt="Character Sprite Editor" />
+  <img src="screenshots/designer.png" width="48%" alt="VNFairy light theme dialogue editor" />
+  <img src="screenshots/designer2.png" width="48%" alt="VNFairy story map showing branching scenes" />
+</p>
+<p align="center">
+  <img src="screenshots/darkmode.png" width="48%" alt="VNFairy dark theme dialogue editor" />
+  <img src="screenshots/char.png" width="48%" alt="VNFairy Asset Management workspace" />
 </p>
 
-> [!NOTE]
-> More screenshots of the interface are available in the [screenshots](screenshots) folder.
+More interface and player views are available in the [screenshots](screenshots) folder.
 
----
+## Quick start
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) v16 or newer
+
+### Run locally
+
+```bash
+git clone https://github.com/coderkei/VNFairy.git
+cd VNFairy
+npm install
+node server.js
+```
+
+Then open one of these URLs:
+
+| URL | Purpose |
+|-----|---------|
+| `http://localhost:3000/` | Play visual novels with the VNFairy Player |
+| `http://localhost:3000/editor.html` | Create and edit projects in the VNFairy Designer |
+
+The server binds to `127.0.0.1` on port `3000` by default and creates a demo project at `data/projects/demo/` on first run. Use custom values when needed:
+
+```bash
+node server.js --port=8080 --host=192.168.1.100
+```
+
+## The authoring workflow
+
+1. **Create a project** in the multi-project dashboard.
+2. **Manage assets** such as backgrounds, character sprites, music, voice clips, sound effects, and videos.
+3. **Write dialogue** in Cards or Script view, with speakers, formatting, audio, and character placement.
+4. **Map the story** with scenes, groups, choices, conditional jumps, and typed project variables.
+5. **Preview and debug** the novel in a new player tab, including optional scene and unlockable tools.
+6. **Export the game** as a self-contained ZIP for static hosting or offline playback.
 
 ## Features
 
 ### Storytelling
-- **Scenes & branching** — Build your story out of scenes, route linearly or through player choices, add conditional jumps, and attach tidy multi-requirement and multi-action rules to choices
-- **Dialogue** — Write in visual Cards or a compact Script view with multi-line selection, bulk speaker assignment, block duplication, reordering, bookmarks, and story-wide search and replace
-- **Narration & speakers** — Choose any character or Narrator from a searchable picker for individual dialogue lines or selected script blocks
-- **Kinetic mode** — Hides choice menus so scenes flow directly into the next without branching prompts
-- **Title screen** — Animated opening screen with customizable background, music, and title/subtitle colors and various view styles
 
-### Characters & Visuals
-- **Character portraits** — Display characters at left, center, or right of the screen with per-line expressions
-- **Backgrounds** — Use uploaded artwork, the novel theme's default background, or a solid white scene background, with fade in/out or crossfade transitions
-- **Cutscenes** — Show on screen text in the middle for a text based cutscene, with scrolling & fade effects and interactive and non-interactive options
-- **Video backgrounds** — Use video files as a scene for video cutscenes
+- **Scenes and groups** — Organise a story into reusable scenes and route it linearly or through player choices.
+- **Branching logic** — Add conditional jumps and multi-condition choice rules backed by boolean, number, text, or inventory variables.
+- **Dialogue authoring** — Use Cards or Script view with search and replace, bulk speaker assignment, duplication, reordering, bookmarks, and reusable presets.
+- **Narration and characters** — Assign a searchable speaker to each line, including non-visual narrators and off-stage voices.
+- **Kinetic mode** — Let scenes advance without presenting interactive choices.
 
-### Audio
-- **Background music** — Assign BGM tracks per scene, with automatic track switching
-- **Sound effects** — Trigger a sound effect or voice dialogue on any individual dialogue line
+### Presentation and audio
 
-### Player Experience
-- **Save / Load** — Paginated save slots (12 per page), persisted in browser storage by immutable project ID so title changes do not hide progress
-- **Options** — Adjust text speed, skip speed and volume in-game
-- **Controls** — Supports both mouse and keyboard controls
-- **Achievements & gallery** — Built-in gallery screen for unlockables such as music, background and characters, and an achievements screen for tracking endings.
+- **Characters** — Place sprites left, centre, or right with per-line expressions and reusable pose sets.
+- **Backgrounds and transitions** — Use uploaded artwork, the novel default background, or a solid background with fade and crossfade transitions.
+- **Cutscenes** — Support image, video, fullscreen text, and automatically advancing text cutscenes.
+- **Title screen** — Configure title artwork, music, colors, menu placement, and presentation styles.
+- **Audio** — Assign background music per scene and trigger voice clips or sound effects on individual dialogue lines.
 
-### Designer & Workflow
-- **Visual editor** — A full browser-based designer for building scenes, characters, and assets without any coding or scripting needed
-- **At-a-glance sidebars** — Browse collapsible scene groups and asset categories without leaving the editor; use the compact **Manage** buttons when you need the full workspaces
-- **Asset Management workspace** — Use a dedicated tabbed modal to upload and organise backgrounds, characters, music, voice and sound, and video. Search, filter, favourite, tag, sort, create virtual folders, find unused files and usage locations, preview media, replace references everywhere, or apply uploads, folders, tags, and deletion in bulk.
-- **Scene Management workspace** — Review scenes and groups in a full-size tabbed modal, search and filter the story, create scenes or groups, bulk-update group or status, bulk-delete, and open, configure, or duplicate individual scenes.
-- **Tabbed scene settings** — Configure scene identity and notes under **Basics**, backgrounds, audio, fonts, and cutscene media under **Media**, and transitions, endings, bookmarks, and player behaviour under **Behaviour**. The live stage preview follows the novel's light or dark theme for dialogue and text colours.
-- **Authoring defaults** — Set a default expression for each character and save reusable pose sets for dialogue layouts.
-- **Multi-project dashboard** — Create, import, duplicate, rename, archive, export, and delete independent projects
-- **Trustworthy authoring** — Project-wide undo/redo, explicit disk/local/failure status, atomic validated saves, and the last 10 successful versions for recovery
-- **Source project archives** — Export and import editable `.vnfairy` archives containing project configuration, scenes, and assets
-- **Test Play** — Preview your novel instantly in a new tab without leaving the editor with an optional debug mode to switch scenes or unlock all unlockables
-- **Export game** — Export a self-contained `.zip` ready to host on any static web server or run locally in a browser without a server
-- **Offline fallback** — Drag-and-drop a `project.json` into the player to run without the local server
-- **Light/Dark theme** — Toggle editor theme, persisted across sessions
+### Player experience
 
----
+- **Save and load** — Use paginated browser saves stored by immutable project ID.
+- **Options and controls** — Adjust text speed, skip speed, and volume; use mouse or keyboard controls.
+- **Gallery and achievements** — Unlock characters, backgrounds, music, and endings as players progress.
+- **Offline fallback** — Drag and drop a `project.json` into the player when a local server is unavailable.
 
-## Project Structure
+### Designer and project workflow
 
-```
+- **Asset Management** — Search, filter, favourite, tag, sort, preview, replace, organise into virtual folders, find unused files, and apply bulk operations.
+- **Scene Management** — Search, filter, group, create, duplicate, configure, bulk-update, and bulk-delete scenes.
+- **Story map and settings** — See route connections and configure novel-wide presentation, variables, transitions, endings, and player behaviour.
+- **Multi-project dashboard** — Create, import, duplicate, rename, archive, export, restore, and delete independent projects.
+- **Reliable authoring** — Use project-wide undo/redo, explicit save status, validated saves, and recovery snapshots.
+- **Source archives** — Export and import editable `.vnfairy` archives containing project configuration, scenes, and assets.
+- **Test Play and Export game** — Preview without leaving the editor, then export a self-contained ZIP for any static web server.
+- **Light and dark themes** — Toggle the editor theme and persist the choice across sessions.
+
+## Project structure
+
+```text
 VNFairy/
-├── index.html          # VNFairy Player (playback engine UI)
-├── editor.html         # VNFairy Designer (visual editor UI)
-├── server.js           # Local Node.js HTTP server & REST API
-├── project-store.js    # Transactional project persistence, migrations & recovery
-├── asset-service.js    # Project-scoped asset registry operations
-├── package-service.js   # Playable ZIP packaging service
-├── shared/              # Browser/Node schema, migrations, model, validation & saves
-├── tests/               # Migration, serializer, validator and store tests
-├── package.json
-├── css/
-│   ├── common.css      # Shared design tokens & utilities
-│   ├── engine.css      # Styles for the playback engine
-│   ├── editor.css      # Styles for the visual designer
-│   └── dashboard.css   # Styles for the projects dashboard
-├── js/
-│   ├── engine.js       # Playback engine logic
-│   └── editor.js       # Visual designer logic
-└── data/
-    └── projects/
-        └── <project-id>/
-            ├── project.json        # Project metadata & config
-            ├── scenes/
-            │   └── <scene_id>.json # One JSON file per scene
-            └── assets/
-                ├── bg/             # Background images
-                ├── char/           # Character sprites
-                ├── music/          # Background music
-                ├── sound/          # Sound effects
-                └── video/          # Video files
+├── index.html          # VNFairy Player
+├── editor.html         # VNFairy Designer
+├── server.js           # Local Node.js HTTP server and REST API
+├── project-store.js    # Persistence, migrations, and recovery
+├── asset-service.js    # Project-scoped asset operations
+├── package-service.js   # Playable ZIP packaging
+├── shared/              # Shared schema, logic, validation, and serializers
+├── tests/               # Regression tests
+├── docs/
+│   ├── index.html       # Visual landing page
+│   ├── API.md           # REST API reference
+│   └── FORMAT.md        # Project and scene format reference
+├── css/                 # Shared, engine, editor, and dashboard styles
+├── js/                  # Player and designer logic
+└── data/projects/<id>/
+    ├── project.json     # Project metadata and scene index
+    ├── scenes/          # One JSON file per scene
+    └── assets/          # Backgrounds, sprites, audio, and videos
 ```
 
-### Persisted Artifact Versions
+## Project artifacts and persistence
 
 Projects and player saves carry independent metadata for their serialized format and runtime provenance:
 
@@ -115,134 +134,40 @@ Projects and player saves carry independent metadata for their serialized format
 }
 ```
 
-`schemaVersion` selects an explicit migration chain. `engineVersion` identifies the runtime that last wrote the artifact, while `createdWithVersion` records the original authoring/runtime version. Legacy artifacts are migrated in memory and written through the normal validated save path. Player saves additionally include `projectId`, `projectSchemaVersion`, `savedAt`, and a nested `state` object.
+`schemaVersion` selects an explicit migration chain. `engineVersion` identifies the runtime that last wrote an artifact, while `createdWithVersion` records the original authoring/runtime version. Legacy artifacts are migrated in memory and written through the normal validated save path. Player saves additionally include `projectId`, `projectSchemaVersion`, `savedAt`, and a nested `state` object.
 
-Run the dependency-free regression tests with:
+See [FORMAT.md](docs/FORMAT.md) for the project and scene data model.
+
+## Packaging and distribution
+
+Click **Export game** in the Designer toolbar to create a self-contained `<project-id>_game.zip`. The archive includes:
+
+- `index.html` — the standalone player
+- `css/` and `js/` — engine assets
+- `data/` — project data, scenes, and uploaded assets
+- Per-scene `.js` wrappers for CORS-free offline playback
+
+The archive can be hosted on GitHub Pages, itch.io, or any static web server, or extracted and opened locally. The editable `.vnfairy` source archive is separate from the playable game package and is intended for backups and moving projects between VNFairy workspaces.
+
+## Development and testing
+
+Install dependencies and run the dependency-free regression suite with:
 
 ```bash
+npm install
 npm test
 ```
 
----
-
-## Getting Started
-
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v16 or newer)
-
-### Running
-
-```bash
-# Clone or download this repository, then:
-npm install
-node server.js
-```
-
-By default, the server binds to `127.0.0.1` (localhost) on port `3000`, making it accessible locally at `http://localhost:3000`. To access it over your local network, you can explicitly bind it to a custom IP address or `0.0.0.0` (all local interfaces).
-
-#### Custom Ports and Host IPs
-You can explicitly define a custom port and binding IP using command-line parameters:
-
-  ```bash
-  node server.js --port=8080 --host=192.168.1.100
-  ```
-
-| URL | Description |
-|-----|-------------|
-| `http://localhost:3000/` | VNFairy Player — play your visual novels |
-| `http://localhost:3000/editor.html` | VNFairy Designer — create and edit projects |
-
-A **demo project** is created automatically on first run at `data/projects/demo/`.
-
----
-
-## Packaging & Distribution
-
-Click **Export game** in the Designer toolbar to export a self-contained `.zip` of your visual novel. The archive includes:
-
-- `index.html` — the standalone player
-- `css/` & `js/` — engine assets
-- `data/` — your project data, scenes, and all uploaded assets
-- Per-scene `.js` wrapper files for CORS-free offline playback
-
-The resulting `<project-id>_game.zip` can be hosted on any static web server or extracted and opened locally.
-
-Asset-library metadata is editor-only project data. The packaged player continues to load the normal `data/` files and per-scene wrappers, so opening the packaged `index.html` directly remains supported without a running VNFairy server.
-
-The editable `.vnfairy` source archive is a separate format intended for backups and moving a project between VNFairy workspaces. It is not a playable-game package.
-
----
-
-## REST API Reference
-
-The local server exposes a simple JSON API used by the designer:
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/projects` | List all projects |
-| `GET` | `/api/project?id=<id>` | Load a project (scenes merged) |
-| `POST` | `/api/project?id=<id>` | Save a project |
-| `POST` | `/api/project/create` | Create a new project |
-| `POST` | `/api/project/delete?id=<id>` | Delete a project |
-| `POST` | `/api/project/duplicate?id=<id>` | Duplicate a project under a new ID |
-| `POST` | `/api/project/rename?id=<id>` | Change a story's display title |
-| `POST` | `/api/project/archive?id=<id>` | Archive or unarchive a project |
-| `GET` | `/api/project/recovery?id=<id>` | List rolling recovery versions |
-| `POST` | `/api/project/restore?id=<id>` | Restore a recovery version |
-| `GET` | `/api/project/export?id=<id>` | Download an editable `.vnfairy` source archive |
-| `POST` | `/api/project/import` | Import a `.vnfairy` source archive |
-| `GET` | `/api/assets?project=<id>` | List assets for a project |
-| `POST` | `/api/upload` | Upload an asset (base64 JSON body); the server validates filename, extension, detected type, size and resolved path boundaries |
-| `POST` | `/api/asset/delete` | Delete an asset file |
-| `GET` | `/api/package/check?id=<id>` | Preflight asset sizes and return packaging warnings |
-| `POST` | `/api/package?id=<id>` | Package a project into a `.zip` |
-
-All other paths are served as static files from the project root.
-
----
-
-## Scene Format
-
-Each scene is stored as a `.json` file under `data/projects/<id>/scenes/`:
-
-```json
-{
-  "id": "scene_1",
-  "name": "Introduction",
-  "background": "data/projects/demo/assets/bg/forest.png",
-  "music": "data/projects/demo/assets/music/theme.mp3",
-  "dialogue": [
-    {
-      "speaker": "Narrator",
-      "text": "It was a quiet morning...",
-      "layout": { "left": null, "center": null, "right": null },
-      "sound": ""
-    },
-    {
-      "speaker": "Aria",
-      "text": "Hello there!",
-      "layout": {
-        "left": { "character": "aria", "expression": "happy" },
-        "center": null,
-        "right": null
-      }
-    }
-  ],
-  "choices": [
-    { "text": "Say hello back", "targetSceneId": "scene_2" },
-    { "text": "Stay silent",    "targetSceneId": "scene_3" }
-  ]
-}
-```
-
----
+For the complete server endpoint list, see [API.md](docs/API.md). For the serialized project and scene examples, see [FORMAT.md](docs/FORMAT.md).
 
 ## License
 
 VNFairy is licensed under the GNU General Public License version 3, or (at your option) any later version.
 
-A special exception permits visual novels exported using the **Export game** feature (either via the Designer or via the API) to be distributed under any license, including proprietary licenses, when they include an unmodified copy of the VNFairy Player. This exception does not affect the licensing of VNFairy itself or any modifications to the VNFairy Player, which remain licensed under the GNU GPL.
+A special exception permits visual novels exported using **Export game**—through the Designer or the API—to be distributed under any license, including proprietary licenses, when they include an unmodified copy of the VNFairy Player. This exception does not affect VNFairy itself or modifications to the VNFairy Player, which remain licensed under the GNU GPL.
 
-See `LICENSE.txt` for the full license and exception.
+See [LICENSE.txt](LICENSE.txt) for the full license and exception.
 
----
+## Development note
+
+This project was developed with assistance from AI language models. Some source code was generated or refined using AI, with generated code reviewed, modified, and integrated by the project author where appropriate.

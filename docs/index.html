@@ -1,95 +1,460 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>VNFairy - Visual Novel Designer</title>
-  <meta name="description" content="VNFairy is a browser-based visual novel designer and HTML5 engine for creating, testing and releasing visual novels." />
-  <meta name="theme-color" content="#111827" />
-  <meta property="og:title" content="VNFairy" />
-  <meta property="og:description" content="Create visual novels with a friendly browser-based designer." />
-  <meta property="og:type" content="website" />
-  <meta property="og:image" content="screenshots/title.png" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f2ed">
+  <meta name="description" content="VNFairy is a browser-based visual novel designer and HTML5 player for building, testing, and shipping story-driven games.">
+  <meta property="og:title" content="VNFairy — Make the story">
+  <meta property="og:description" content="A friendly visual novel designer and HTML5 engine built with Node.js.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="../screenshots/title.png">
+  <title>VNFairy — Make the story</title>
   <style>
-    :root{
-      --bg:#f6f7fb;--panel:#ffffff;--panel-2:#f8f9fd;--ink:#1f2937;--muted:#6b7280;--soft:#94a3b8;
-      --line:#e5e7f0;--purple:#7c4dff;--purple-2:#efeaff;--purple-3:#5b35d5;--pink:#d946ef;
-      --blue:#3b82f6;--green:#10b981;--red:#ef4444;--amber:#f59e0b;--shadow:0 18px 45px rgba(15,23,42,.09);
-      --radius:16px;--max:1180px;color-scheme:light;
+    :root {
+      --paper: #f6f2ed;
+      --paper-strong: #fffdf9;
+      --ink: #20252d;
+      --muted: #69717a;
+      --soft: #9aa0a6;
+      --line: #dedbd5;
+      --plum: #75577d;
+      --plum-dark: #563d60;
+      --plum-soft: #eee5f0;
+      --rose: #e99ab8;
+      --gold: #dca969;
+      --night: #12171d;
+      --night-card: #1a2027;
+      --shadow: 0 18px 55px rgba(47, 36, 47, .10);
+      --shadow-small: 0 8px 25px rgba(47, 36, 47, .08);
+      --radius: 18px;
+      --max: 1180px;
     }
-    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:inherit;text-decoration:none}img{max-width:100%;display:block}.wrap{width:min(var(--max),calc(100% - 36px));margin:auto}
-    .topbar{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}.nav{height:66px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:18px}.brand{display:flex;align-items:center;gap:10px;font-weight:800;color:var(--purple-3)}.brand-mark{font-size:23px}.project-title{text-align:center;font-size:13px;font-weight:800}.project-title span{color:var(--muted);font-weight:600;margin-left:18px}.nav-links{justify-self:end;display:flex;gap:8px;align-items:center}.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:38px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:#fff;color:#111827;font-size:13px;font-weight:800;box-shadow:0 1px 2px rgba(15,23,42,.04);white-space:nowrap}.btn:hover{border-color:#c7c9d6;transform:translateY(-1px)}.btn.primary{background:var(--purple);border-color:var(--purple);color:white;box-shadow:0 10px 24px rgba(124,77,255,.26)}.btn.dark{background:#111827;color:#fff;border-color:#111827}.tabs{height:42px;background:#fff;border-bottom:1px solid var(--line)}.tab-row{height:42px;display:grid;grid-template-columns:repeat(6,1fr);align-items:end}.tab{height:42px;display:grid;place-items:center;color:#64748b;font-size:12px;font-weight:700;border-bottom:2px solid transparent}.tab.active{color:var(--purple);border-bottom-color:var(--purple)}
-    .hero{padding:44px 0 30px}.hero-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:26px;align-items:start}.hero-copy{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.panel-head{height:46px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px;background:var(--panel-2);border-bottom:1px solid var(--line);font-size:13px;font-weight:800}.panel-head .status{color:var(--soft);font-size:12px;font-weight:700}.hero-body{padding:28px}.eyebrow{display:inline-flex;align-items:center;gap:8px;color:var(--purple);font-size:13px;font-weight:800;background:var(--purple-2);border:1px solid #ddd5ff;padding:7px 10px;border-radius:999px}h1{margin:18px 0 14px;font-size:clamp(42px,7vw,74px);line-height:.95;letter-spacing:-.06em}.lead{margin:0;color:#4b5563;font-size:18px;line-height:1.7}.hero-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}.mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:22px}.mini{border:1px solid var(--line);border-radius:12px;background:#fff;padding:13px}.mini strong{display:block;font-size:14px}.mini span{font-size:12px;color:var(--muted)}.preview-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.preview-title{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:800;font-size:13px}.preview-title span{color:var(--muted);font-weight:700;font-size:12px}.hero-shot{padding:12px}.hero-shot img{width:100%;border-radius:12px;border:1px solid #cfd5e3;background:#111827}.hero-note{margin:0 12px 12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#f8f9fd;color:#4b5563;font-size:14px;line-height:1.55}
-    section{padding:52px 0}.section-head{display:flex;justify-content:space-between;align-items:end;gap:22px;margin-bottom:18px}.section-head.center{display:block;text-align:center;max-width:780px;margin:0 auto 24px}h2{margin:0;font-size:clamp(30px,4vw,48px);letter-spacing:-.05em;line-height:1.02}.section-head p{margin:8px 0 0;color:var(--muted);line-height:1.7;font-size:16px}.workspace{display:grid;grid-template-columns:185px minmax(0,1fr) 230px;gap:14px}.sidebar,.main-panel,.rightbar{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.side-title,.right-title{padding:14px 14px 10px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.04em;color:#475569}.search{margin:0 12px 12px;padding:9px 10px;border-radius:9px;background:#f8fafc;border:1px solid var(--line);color:var(--soft);font-size:12px}.scene-list{padding:0 10px 12px;display:grid;gap:8px}.scene{padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:13px;font-weight:700}.scene.active{border-color:var(--purple);background:var(--purple-2);color:var(--purple-3)}.dialogue{padding:14px;display:grid;gap:12px}.dialogue-row{border:1px solid var(--line);border-radius:12px;background:#fff;padding:12px}.dialogue-row.active{border-color:var(--purple);box-shadow:0 0 0 3px rgba(124,77,255,.12)}.row-top{display:flex;align-items:center;gap:10px;margin-bottom:8px}.num{font-size:12px;color:#64748b;font-weight:900}.select{padding:7px 12px;border:1px solid var(--line);border-radius:9px;background:#f8fafc;font-size:12px;font-weight:800;color:#475569}.text-box{min-height:42px;border:1px solid var(--line);border-radius:9px;background:#fbfcff;padding:10px;color:#334155;font-size:13px}.right-preview{margin:0 12px 12px;border-radius:10px;overflow:hidden;border:1px solid var(--line)}.right-preview img{aspect-ratio:16/9;object-fit:cover}.prop{margin:0 12px 12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fff}.prop h4{margin:0 0 10px;font-size:12px;text-transform:uppercase;color:#64748b}.slot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:12px}.badge{padding:5px 8px;border-radius:8px;background:var(--purple-2);color:var(--purple-3);font-weight:800}.badge.green{background:#dcfce7;color:#047857}.badge.pink{background:#fae8ff;color:#a21caf}
-    .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px}.card .icon{width:36px;height:36px;display:grid;place-items:center;border-radius:10px;background:var(--purple-2);margin-bottom:14px}.card h3{margin:0 0 8px;font-size:18px}.card p{margin:0;color:var(--muted);line-height:1.55;font-size:14px}.steps{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;counter-reset:step}.step{counter-increment:step;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow)}.step:before{content:counter(step);display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--purple);color:white;font-weight:900;margin-bottom:12px}.step h3{margin:0 0 6px;font-size:15px}.step p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.showcase{display:grid;gap:18px}.feature{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;align-items:stretch;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.feature:nth-child(even){grid-template-columns:.9fr 1.1fr}.feature:nth-child(even) .feature-copy{order:-1}.shot{padding:12px;background:#f8f9fd;border-right:1px solid var(--line)}.feature:nth-child(even) .shot{border-right:0;border-left:1px solid var(--line)}.shot img{width:100%;height:100%;min-height:280px;object-fit:cover;border-radius:12px;border:1px solid #d6dae7}.feature-copy{padding:28px;display:flex;flex-direction:column;justify-content:center}.tag{color:var(--purple);font-size:12px;text-transform:uppercase;font-weight:900;letter-spacing:.08em}.feature-copy h3{margin:10px 0;font-size:clamp(25px,3vw,38px);letter-spacing:-.045em;line-height:1.05}.feature-copy p{margin:0;color:var(--muted);line-height:1.65}.pill-grid{display:flex;flex-wrap:wrap;gap:10px}.pill{padding:10px 13px;border:1px solid var(--line);border-radius:10px;background:#fff;color:#475569;font-size:13px;font-weight:800;box-shadow:0 1px 2px rgba(15,23,42,.04)}.install{display:grid;grid-template-columns:.95fr 1.05fr;gap:16px}.terminal{background:#111827;color:#e5e7eb;border-radius:var(--radius);border:1px solid #1f2937;box-shadow:var(--shadow);overflow:hidden}.terminal-bar{display:flex;gap:7px;padding:13px 15px;background:#0b1020;border-bottom:1px solid #263142}.dot{width:11px;height:11px;border-radius:50%;background:#ef4444}.dot:nth-child(2){background:#f59e0b}.dot:nth-child(3){background:#10b981}pre{margin:0;padding:20px;overflow:auto;font-size:14px;line-height:1.65}code{font-family:"JetBrains Mono","Cascadia Code",Consolas,monospace}.flow{display:grid;gap:10px}.flow-item{display:flex;justify-content:space-between;gap:12px;padding:15px;border:1px solid var(--line);border-radius:12px;background:#fff}.flow-item span{color:var(--muted);font-size:13px}.cta{background:linear-gradient(135deg,#fff,#f7f5ff);border:1px solid #ddd5ff;border-radius:22px;box-shadow:var(--shadow);padding:36px;text-align:center}.cta p{max-width:760px;margin:10px auto 22px;color:var(--muted);line-height:1.7}footer{padding:32px 0 42px;color:var(--muted);border-top:1px solid var(--line)}.footer-inner{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap}.footer-links{display:flex;gap:14px;flex-wrap:wrap}.footer-links a{font-weight:800;color:#475569}
-    @media(max-width:980px){.nav{grid-template-columns:1fr auto}.project-title{display:none}.hero-grid,.workspace,.feature,.feature:nth-child(even),.install{grid-template-columns:1fr}.feature:nth-child(even) .feature-copy{order:0}.shot,.feature:nth-child(even) .shot{border:0;border-bottom:1px solid var(--line)}.cards{grid-template-columns:repeat(2,1fr)}.steps{grid-template-columns:repeat(3,1fr)}.tab-row{overflow:auto;display:flex}.tab{min-width:150px}.rightbar{display:none}}@media(max-width:640px){.wrap{width:min(var(--max),calc(100% - 24px))}.nav-links .btn:not(.primary){display:none}.hero{padding-top:26px}.hero-body{padding:20px}.mini-grid,.cards,.steps{grid-template-columns:1fr}.section-head{display:block}.hero-actions .btn{width:100%}section{padding:38px 0}.feature-copy{padding:22px}.shot img{min-height:auto}.tabs{display:none}}
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+    a { color: inherit; text-decoration: none; }
+    img { display: block; max-width: 100%; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    .wrap { width: min(var(--max), calc(100% - 48px)); margin-inline: auto; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--plum-dark);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before {
+      width: 26px;
+      height: 1px;
+      background: var(--rose);
+      content: "";
+    }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid rgba(222, 219, 213, .88);
+      background: rgba(246, 242, 237, .88);
+      backdrop-filter: blur(16px);
+    }
+    .nav {
+      min-height: 74px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 28px;
+    }
+    .brand { display: inline-flex; align-items: center; gap: 11px; font-weight: 850; }
+    .brand-mark {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 1px solid var(--plum);
+      border-radius: 10px;
+      color: var(--plum);
+      font-size: 13px;
+      letter-spacing: -.08em;
+    }
+    .brand-copy { display: grid; gap: 0; line-height: 1.05; }
+    .brand-copy small { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .18em; margin-top: 4px; }
+    .nav-links { display: flex; align-items: center; gap: 8px; }
+    .nav-links a { color: var(--muted); font-size: 13px; font-weight: 750; padding: 10px 12px; }
+    .nav-links a:hover { color: var(--plum-dark); }
+    .button {
+      display: inline-flex;
+      min-height: 42px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 17px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper-strong);
+      box-shadow: 0 2px 4px rgba(47, 36, 47, .03);
+      color: var(--ink) !important;
+      font-size: 13px;
+      font-weight: 800 !important;
+      transition: transform .2s ease, box-shadow .2s ease, background .2s ease;
+    }
+    .button:hover { box-shadow: var(--shadow-small); transform: translateY(-2px); }
+    .button.primary { border-color: var(--plum); background: var(--plum); color: #fff !important; box-shadow: 0 10px 22px rgba(117, 87, 125, .25); }
+    .button.primary:hover { background: var(--plum-dark); }
+    .button.ghost { background: transparent; }
+
+    .hero { padding: 72px 0 92px; overflow: hidden; }
+    .hero-grid { display: grid; grid-template-columns: .83fr 1.17fr; align-items: center; gap: 54px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 590px;
+      margin: 18px 0 23px;
+      font-size: clamp(48px, 7vw, 84px);
+      line-height: .96;
+      letter-spacing: -.075em;
+      font-weight: 850;
+    }
+    .hero-copy > p { max-width: 510px; color: var(--muted); font-size: 18px; line-height: 1.72; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 27px; color: var(--muted); font-size: 12px; font-weight: 750; }
+    .hero-meta span { display: inline-flex; align-items: center; gap: 7px; }
+    .hero-meta span::before { width: 7px; height: 7px; border-radius: 50%; background: var(--rose); content: ""; }
+    .hero-meta span:nth-child(2)::before { background: var(--gold); }
+    .hero-meta span:nth-child(3)::before { background: var(--plum); }
+    .hero-visual { position: relative; }
+    .hero-visual::before {
+      position: absolute;
+      z-index: -1;
+      top: -38px;
+      right: -55px;
+      width: 310px;
+      height: 310px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(233, 154, 184, .30), rgba(233, 154, 184, 0) 68%);
+      content: "";
+    }
+    .hero-frame { padding: 11px; border: 1px solid var(--line); border-radius: 22px; background: var(--paper-strong); box-shadow: var(--shadow); transform: rotate(1.2deg); }
+    .hero-frame img { width: 100%; aspect-ratio: 16 / 9; border-radius: 13px; object-fit: cover; object-position: center; }
+    .frame-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 4px 2px; color: var(--muted); font-size: 11px; font-weight: 750; }
+    .frame-caption strong { color: var(--ink); font-size: 13px; }
+
+    .section { padding: 94px 0; }
+    .section.tint { background: #fbf9f5; border-block: 1px solid var(--line); }
+    .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 30px; margin-bottom: 28px; }
+    .section-heading.center { display: block; max-width: 720px; margin: 0 auto 34px; text-align: center; }
+    h2 { max-width: 760px; margin: 13px 0 0; font-size: clamp(36px, 5vw, 58px); line-height: 1.02; letter-spacing: -.065em; }
+    .section-heading p { max-width: 485px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.7; }
+    .section-heading.center p { max-width: 640px; margin: 14px auto 0; }
+
+    .editor-showcase { display: grid; grid-template-columns: 1.4fr .6fr; align-items: stretch; gap: 18px; }
+    .image-card { overflow: hidden; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-strong); box-shadow: var(--shadow-small); }
+    .image-card img { width: 100%; height: 100%; border-radius: 11px; object-fit: cover; object-position: center top; }
+    .showcase-copy { display: flex; flex-direction: column; justify-content: center; padding: 18px 8px 18px 24px; }
+    .showcase-copy h3 { margin: 14px 0 12px; font-size: 31px; line-height: 1.08; letter-spacing: -.045em; }
+    .showcase-copy p { color: var(--muted); line-height: 1.7; }
+    .feature-list { display: grid; gap: 12px; margin: 16px 0 0; padding: 0; list-style: none; }
+    .feature-list li { display: flex; align-items: baseline; gap: 10px; color: var(--ink); font-size: 13px; font-weight: 750; }
+    .feature-list li::before { color: var(--plum); content: "✦"; font-size: 12px; }
+
+    .capability-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; }
+    .capability { min-height: 220px; padding: 22px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper-strong); }
+    .capability-number { color: var(--rose); font-family: Georgia, serif; font-size: 25px; font-style: italic; }
+    .capability h3 { margin: 18px 0 8px; font-size: 18px; letter-spacing: -.025em; }
+    .capability p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+
+    .gallery-grid { display: grid; grid-template-columns: 1.16fr .84fr; gap: 18px; }
+    .gallery-main, .gallery-side { display: grid; gap: 18px; }
+    .gallery-side { grid-template-rows: 1fr 1fr; }
+    .gallery-card { position: relative; overflow: hidden; min-height: 250px; border-radius: 16px; background: #20242b; box-shadow: var(--shadow-small); }
+    .gallery-card img { width: 100%; height: 100%; min-height: 250px; object-fit: cover; transition: transform .45s ease; }
+    .gallery-card:hover img { transform: scale(1.025); }
+    .gallery-card::after { position: absolute; inset: 48% 0 0; background: linear-gradient(transparent, rgba(13, 16, 22, .82)); content: ""; pointer-events: none; }
+    .gallery-label { position: absolute; z-index: 1; right: 18px; bottom: 15px; left: 18px; color: #fff; }
+    .gallery-label small { display: block; margin-bottom: 3px; color: #f0b9ce; font-size: 10px; font-weight: 850; letter-spacing: .14em; text-transform: uppercase; }
+    .gallery-label strong { font-size: 17px; letter-spacing: -.02em; }
+    .gallery-main .gallery-card { min-height: 520px; }
+    .gallery-main .gallery-card img { min-height: 520px; }
+    .gallery-main .gallery-card:first-child img { object-position: center top; }
+
+    .player-strip { display: grid; grid-template-columns: .8fr 1.2fr; align-items: center; gap: 32px; padding: 36px; border-radius: 20px; background: var(--night); color: #f9f6f2; box-shadow: var(--shadow); }
+    .player-strip .eyebrow { color: #efbdd0; }
+    .player-strip h2 { max-width: 390px; color: #fff; }
+    .player-strip p { max-width: 410px; margin: 16px 0 0; color: #b6bec6; font-size: 14px; line-height: 1.7; }
+    .player-shot { overflow: hidden; padding: 8px; border: 1px solid #353d46; border-radius: 15px; background: #20272f; }
+    .player-shot img { width: 100%; aspect-ratio: 16 / 9; border-radius: 9px; object-fit: cover; object-position: center top; }
+
+    .setup { display: grid; grid-template-columns: .85fr 1.15fr; gap: 18px; }
+    .setup-copy, .terminal { border: 1px solid var(--line); border-radius: 16px; background: var(--paper-strong); box-shadow: var(--shadow-small); }
+    .setup-copy { padding: 28px; }
+    .setup-copy h3 { margin: 14px 0 10px; font-size: 26px; letter-spacing: -.04em; }
+    .setup-copy p { color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .endpoint-list { display: grid; gap: 9px; margin-top: 22px; }
+    .endpoint { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 9px; background: #fbf9f5; font-size: 12px; }
+    .endpoint strong { font-size: 12px; }
+    .endpoint code { color: var(--plum-dark); font-size: 11px; }
+    .terminal { overflow: hidden; border-color: #29313a; background: var(--night); color: #e6e9ec; }
+    .terminal-bar { display: flex; align-items: center; gap: 7px; padding: 13px 16px; border-bottom: 1px solid #29313a; background: #0e1318; }
+    .terminal-bar span { width: 10px; height: 10px; border-radius: 50%; background: #ec8c9f; }
+    .terminal-bar span:nth-child(2) { background: #e4b269; }
+    .terminal-bar span:nth-child(3) { background: #7fc7a5; }
+    pre { min-height: 100%; margin: 0; padding: 28px; overflow: auto; font-size: 14px; line-height: 1.8; }
+    code { font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
+    .code-muted { color: #75818d; }
+    .code-accent { color: #f0b9ce; }
+
+    .closing { padding: 110px 0 100px; text-align: center; }
+    .closing h2 { max-width: 650px; margin: 15px auto 14px; }
+    .closing p { max-width: 620px; margin: 0 auto; color: var(--muted); line-height: 1.7; }
+    .closing .hero-actions { justify-content: center; margin-top: 28px; }
+    footer { padding: 25px 0 34px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+    .footer-links { display: flex; gap: 16px; font-weight: 750; }
+    .footer-links a:hover { color: var(--plum-dark); }
+
+    @media (max-width: 980px) {
+      .hero-grid, .player-strip, .setup { grid-template-columns: 1fr; }
+      .hero-grid { gap: 38px; }
+      .hero-copy { max-width: 680px; }
+      .editor-showcase { grid-template-columns: 1fr; }
+      .showcase-copy { padding: 20px 8px 0; }
+      .capability-grid { grid-template-columns: repeat(2, 1fr); }
+      .player-strip { padding: 28px; }
+      .player-strip h2 { max-width: 650px; }
+    }
+    @media (max-width: 680px) {
+      .wrap { width: min(var(--max), calc(100% - 28px)); }
+      .nav { min-height: 64px; }
+      .nav-links a:not(.button) { display: none; }
+      .nav-links { gap: 4px; }
+      .nav-links .button { min-height: 36px; padding: 0 11px; font-size: 11px !important; }
+      .hero { padding: 48px 0 66px; }
+      h1 { font-size: clamp(46px, 14vw, 72px); }
+      .hero-copy > p { font-size: 16px; }
+      .section { padding: 66px 0; }
+      .section-heading { display: block; }
+      .section-heading p { margin-top: 14px; }
+      h2 { font-size: 42px; }
+      .capability-grid, .gallery-grid { grid-template-columns: 1fr; }
+      .gallery-side { grid-template-rows: none; }
+      .gallery-main .gallery-card, .gallery-main .gallery-card img, .gallery-card, .gallery-card img { min-height: 260px; }
+      .player-strip { padding: 24px; }
+      .setup-copy { padding: 22px; }
+      .endpoint { display: block; }
+      .endpoint code { display: block; margin-top: 5px; }
+      pre { padding: 22px; font-size: 12px; }
+      .closing { padding: 75px 0 72px; }
+      .footer-inner { align-items: flex-start; flex-direction: column; }
+    }
   </style>
 </head>
 <body>
+  <a href="#content" style="position:absolute;left:-9999px;top:auto">Skip to content</a>
   <header class="topbar">
     <div class="wrap nav">
-      <a class="brand" href="#top" aria-label="VNFairy home"><span class="brand-mark">🧚</span><span>VNFairy Designer</span></a>
-      <div class="project-title">Winter Dreams <span>by VNFairy Studio</span></div>
-      <nav class="nav-links" aria-label="Main navigation"><a class="btn" href="https://github.com/coderkei/VNFairy" target="_blank" rel="noreferrer">GitHub</a><a class="btn" href="https://github.com/coderkei/VNFairy#readme" target="_blank" rel="noreferrer">README</a><a class="btn primary" href="https://github.com/coderkei/VNFairy/releases" target="_blank" rel="noreferrer">Releases</a></nav>
+      <a class="brand" href="#top" aria-label="VNFairy home">
+        <span class="brand-mark">VF</span>
+        <span class="brand-copy">VNFairy<small>STORY STUDIO</small></span>
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="#editor">Designer</a>
+        <a href="#features">Features</a>
+        <a href="#screenshots">Screenshots</a>
+        <a class="button" href="https://github.com/coderkei/VNFairy#readme" target="_blank" rel="noreferrer">Read the README</a>
+        <a class="button primary" href="https://github.com/coderkei/VNFairy/releases" target="_blank" rel="noreferrer">Get VNFairy</a>
+      </nav>
     </div>
-    <div class="tabs"><div class="wrap tab-row"><a class="tab active" href="#workflow">Editor Preview</a><a class="tab" href="#features">Feature Set</a><a class="tab" href="#process">How It Works</a><a class="tab" href="#showcase">Screenshots</a><a class="tab" href="#install">Setup</a><a class="tab" href="#license">Open Source</a></div></div>
   </header>
-  <main id="top">
-    <section class="hero">
+
+  <main id="content">
+    <section class="hero" id="top">
       <div class="wrap hero-grid">
         <div class="hero-copy">
-          <div class="panel-head"><span>Scene Settings</span><span class="status">All changes saved</span></div>
-          <div class="hero-body">
-            <span class="eyebrow">Browser-based visual novel creator</span>
-            <h1>Create visual novels visually.</h1>
-            <p class="lead">VNFairy is a lightweight HTML5 and Node.js visual novel engine with a friendly no-code designer for building stories, scenes, characters, choices and packaged browser games.</p>
-            <div class="hero-actions"><a class="btn primary" href="https://github.com/coderkei/VNFairy/releases" target="_blank" rel="noreferrer">Get latest release</a><a class="btn dark" href="https://github.com/coderkei/VNFairy#readme" target="_blank" rel="noreferrer">Read the docs</a></div>
-            <div class="mini-grid" aria-label="VNFairy highlights"><div class="mini"><strong>No-code</strong><span>Visual editor workflow</span></div><div class="mini"><strong>HTML5</strong><span>Static game exports</span></div><div class="mini"><strong>GPLv3+</strong><span>Open source engine</span></div></div>
+          <span class="eyebrow">HTML5 + Node.js · version 2.0.0</span>
+          <h1>Make the story.<br><em style="color:var(--plum);font-family:Georgia,serif;font-weight:400">Ship the feeling.</em></h1>
+          <p>VNFairy is a friendly visual novel designer and browser player for turning scenes, characters, choices, and atmosphere into a game you can share.</p>
+          <div class="hero-actions">
+            <a class="button primary" href="https://github.com/coderkei/VNFairy/releases" target="_blank" rel="noreferrer">Download the latest release <span aria-hidden="true">↗</span></a>
+            <a class="button ghost" href="#setup">Start locally</a>
+          </div>
+          <div class="hero-meta" aria-label="VNFairy highlights">
+            <span>Visual editor</span>
+            <span>Live playtest</span>
+            <span>Static export</span>
           </div>
         </div>
-        <div class="preview-card">
-          <div class="preview-title">Stage Layout Preview <span>Title screen</span></div>
-          <div class="hero-shot"><img src="screenshots/title.png" alt="VNFairy title screen screenshot" onerror="this.src='https://raw.githubusercontent.com/coderkei/VNFairy/main/screenshots/title.png'" /></div>
-          <p class="hero-note">Design title screens, backgrounds, dialogue and branching scenes from one local browser-based designer.</p>
+        <div class="hero-visual">
+          <div class="hero-frame">
+            <img src="../screenshots/title.png" alt="Haruka Days title screen running in the VNFairy player">
+            <div class="frame-caption"><strong>Haruka Days · player preview</strong><span>Title screen</span></div>
+          </div>
         </div>
       </div>
     </section>
 
-    <section id="workflow">
+    <section class="section tint" id="editor">
       <div class="wrap">
-        <div class="section-head center"><h2>Built around the VNFairy workflow</h2><p>VNFairy brings the main parts of a visual novel project together in one workspace: scene lists, dialogue editing, asset tools, story flow, settings and live preview.</p></div>
-        <div class="workspace" aria-label="VNFairy-inspired interface mockup">
-          <aside class="sidebar"><div class="side-title">Story Scenes</div><div class="search">Search scenes...</div><div class="scene-list"><div class="scene active">Introduction (Start)</div><div class="scene">Meeting Sayuki</div><div class="scene">Dream</div><div class="scene">Bedroom</div><div class="scene">Shopping District</div><div class="scene">End of Demo</div></div></aside>
-          <div class="main-panel"><div class="panel-head"><span>Dialogue Flow</span><span class="status">Editable timeline</span></div><div class="dialogue"><div class="dialogue-row active"><div class="row-top"><span class="num">#1</span><span class="select">Narrator</span></div><div class="text-box">It's snowing.</div></div><div class="dialogue-row"><div class="row-top"><span class="num">#2</span><span class="select">Narrator</span></div><div class="text-box">Pure white snow is falling from the heavily clouded winter sky.</div></div><div class="dialogue-row"><div class="row-top"><span class="num">#3</span><span class="select">Girl</span></div><div class="text-box">You're covered in snow.</div></div></div></div>
-          <aside class="rightbar"><div class="right-title">Stage Layout Preview</div><div class="right-preview"><img src="screenshots/vn1.png" alt="VNFairy game preview screenshot" onerror="this.src='https://raw.githubusercontent.com/coderkei/VNFairy/main/screenshots/vn1.png'" /></div><div class="prop"><h4>Character slots</h4><div class="slot"><span class="badge">Left</span><span>Empty Slot</span></div><div class="slot"><span class="badge pink">Center</span><span>Girl</span></div><div class="slot"><span class="badge green">Right</span><span>Empty Slot</span></div></div></aside>
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">One workspace, many ways to write</span>
+            <h2>Build from the line you want to write next.</h2>
+          </div>
+          <p>Keep the story close at hand: edit dialogue, inspect the live stage, manage media, and move through your route without leaving the designer.</p>
+        </div>
+        <div class="editor-showcase">
+          <div class="image-card"><img src="../screenshots/designer.png" alt="VNFairy light theme dialogue editor showing a scene, dialogue cards, asset sidebar, and stage preview"></div>
+          <div class="showcase-copy">
+            <span class="eyebrow">Dialogue editor</span>
+            <h3>Cards when you want focus. Script when you want speed.</h3>
+            <p>Write narrator and character lines in a visual flow, then tune each line from the inspector on the right.</p>
+            <ul class="feature-list">
+              <li>Search, replace, duplicate, reorder</li>
+              <li>Speaker, voice, style, and placement per line</li>
+              <li>Live stage preview while you author</li>
+            </ul>
+          </div>
         </div>
       </div>
     </section>
 
-    <section id="features"><div class="wrap"><div class="section-head"><div><h2>Built for visual story creation</h2><p>Practical tools for characters, assets, scenes, branching and instant playtesting.</p></div></div><div class="cards"><article class="card"><div class="icon">🎭</div><h3>Scenes & branching</h3><p>Create scenes, choices and routes that jump to any other scene in your project.</p></article><article class="card"><div class="icon">💬</div><h3>Dialogue editor</h3><p>Write narrator and character lines with typewriter text, speakers, styles and per-line layout.</p></article><article class="card"><div class="icon">🖼️</div><h3>Visual assets</h3><p>Upload backgrounds, sprites, music, sound effects and videos through the asset manager.</p></article><article class="card"><div class="icon">📦</div><h3>Releases</h3><p>Export a self-contained ZIP that can be hosted on GitHub Pages, itch.io or any static server.</p></article></div></div></section>
+    <section class="section" id="features">
+      <div class="wrap">
+        <div class="section-heading center">
+          <span class="eyebrow">Made for visual storytelling</span>
+          <h2>Everything around the words belongs in the same flow.</h2>
+          <p>VNFairy brings authoring, presentation, routing, and packaging together without asking you to write a custom engine first.</p>
+        </div>
+        <div class="capability-grid">
+          <article class="capability"><span class="capability-number">01</span><h3>Shape the route</h3><p>Create scenes and groups, connect choices, add conditional jumps, and see the whole story in a visual map.</p></article>
+          <article class="capability"><span class="capability-number">02</span><h3>Compose the stage</h3><p>Place characters left, centre, or right with expressions, backgrounds, transitions, music, sound, and cutscenes.</p></article>
+          <article class="capability"><span class="capability-number">03</span><h3>Track the journey</h3><p>Use variables, endings, unlockables, gallery content, achievements, and a debug playtest menu for richer routes.</p></article>
+          <article class="capability"><span class="capability-number">04</span><h3>Share the finished game</h3><p>Export a self-contained ZIP for static hosting or run the player offline with the built-in fallback.</p></article>
+        </div>
+      </div>
+    </section>
 
-    <section id="process"><div class="wrap"><div class="section-head"><div><h2>How it works</h2><p>Start the local server, open the designer, create your project, test it instantly, then create a release build for static hosting.</p></div></div><div class="steps"><article class="step"><h3>Create project</h3><p>Start fresh or use the automatic demo project.</p></article><article class="step"><h3>Add assets</h3><p>Upload backgrounds, sprites, audio and video.</p></article><article class="step"><h3>Build scenes</h3><p>Write dialogue and set character positions.</p></article><article class="step"><h3>Add choices</h3><p>Branch routes between scenes visually.</p></article><article class="step"><h3>Test play</h3><p>Preview your visual novel in a new tab.</p></article><article class="step"><h3>Release</h3><p>Export a static ZIP ready to share.</p></article></div></div></section>
+    <section class="section tint" id="screenshots">
+      <div class="wrap">
+        <div class="section-heading center">
+          <span class="eyebrow">A closer look</span>
+          <h2>Quiet tools for big feelings.</h2>
+          <p>The current interface is designed to keep the story readable, whether you prefer a bright studio or a late-night dark mode.</p>
+        </div>
+        <div class="gallery-grid">
+          <div class="gallery-main">
+            <a class="gallery-card" href="../screenshots/designer2.png" target="_blank" rel="noreferrer">
+              <img src="../screenshots/designer2.png" alt="VNFairy story map showing branching scenes and route connections">
+              <span class="gallery-label"><small>Story map</small><strong>See the shape of every route.</strong></span>
+            </a>
+          </div>
+          <div class="gallery-side">
+            <a class="gallery-card" href="../screenshots/darkmode.png" target="_blank" rel="noreferrer">
+              <img src="../screenshots/darkmode.png" alt="VNFairy dark theme dialogue editor">
+              <span class="gallery-label"><small>Dark theme</small><strong>Write after sunset.</strong></span>
+            </a>
+            <a class="gallery-card" href="../screenshots/char.png" target="_blank" rel="noreferrer">
+              <img src="../screenshots/char.png" alt="VNFairy asset management workspace showing character sprite files">
+              <span class="gallery-label"><small>Asset management</small><strong>Keep every expression close.</strong></span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
 
-    <section id="showcase"><div class="wrap showcase"><div class="section-head center"><h2>See the designer in action</h2><p>The page links directly to screenshots already stored in the repository, so you can update the visuals later without editing the layout.</p></div><article class="feature"><div class="shot"><img src="screenshots/designer.png" alt="VNFairy visual novel designer screenshot" onerror="this.src='https://raw.githubusercontent.com/coderkei/VNFairy/main/screenshots/designer.png'" /></div><div class="feature-copy"><span class="tag">Designer</span><h3>Build stories from a visual editor</h3><p>Manage scenes, dialogue, branching paths, backgrounds and playback settings from a browser-based workspace designed for story creation.</p></div></article><article class="feature"><div class="shot"><img src="screenshots/darkmode.png" alt="VNFairy dark mode designer screenshot" onerror="this.src='https://raw.githubusercontent.com/coderkei/VNFairy/main/screenshots/darkmode.png'" /></div><div class="feature-copy"><span class="tag">Themes</span><h3>Light and dark editor styles</h3><p>The designer supports a clean light workspace and a darker editing mode for late-night story work.</p></div></article><article class="feature"><div class="shot"><img src="screenshots/char.png" alt="VNFairy character sprite editor screenshot" onerror="this.src='https://raw.githubusercontent.com/coderkei/VNFairy/main/screenshots/char.png'" /></div><div class="feature-copy"><span class="tag">Characters</span><h3>Control expressions and placement</h3><p>Display characters on the left, centre or right of the screen, with expressions assigned per dialogue line.</p></div></article><article class="feature"><div class="shot"><img src="screenshots/vn2.png" alt="VNFairy visual novel playback screenshot" onerror="this.src='https://raw.githubusercontent.com/coderkei/VNFairy/main/screenshots/vn2.png'" /></div><div class="feature-copy"><span class="tag">Player</span><h3>Play instantly in HTML5</h3><p>Test your novel directly in the browser with save/load, options, mouse controls and keyboard support.</p></div></article></div></section>
+    <section class="section">
+      <div class="wrap">
+        <div class="player-strip">
+          <div>
+            <span class="eyebrow">The player is part of the story</span>
+            <h2>Playtest the feeling before you export it.</h2>
+            <p>Preview scenes in a new tab, tune the pacing, and let players use the features they expect: save/load, options, gallery, achievements, and keyboard controls.</p>
+          </div>
+          <div class="player-shot"><img src="../screenshots/vn1.png" alt="VNFairy player showing a character in a classroom scene with dialogue and quick controls"></div>
+        </div>
+      </div>
+    </section>
 
-    <section><div class="wrap"><div class="section-head"><div><h2>Included features</h2><p>VNFairy includes the core pieces needed for browser-based visual novels, from dialogue and character portraits to releases and offline playback.</p></div></div><div class="pill-grid"><span class="pill">Branching choices</span><span class="pill">Dialogue</span><span class="pill">Narration</span><span class="pill">Kinetic mode</span><span class="pill">Title screens</span><span class="pill">Character portraits</span><span class="pill">Background transitions</span><span class="pill">Cutscenes</span><span class="pill">Video backgrounds</span><span class="pill">BGM</span><span class="pill">Sound effects</span><span class="pill">Save / Load</span><span class="pill">Options menu</span><span class="pill">Achievements</span><span class="pill">Gallery</span><span class="pill">Asset manager</span><span class="pill">Multi-project dashboard</span><span class="pill">Test Play</span><span class="pill">Releases</span><span class="pill">Light / Dark theme</span></div></div></section>
-
-    <section id="install"><div class="wrap install"><div class="hero-copy"><div class="panel-head"><span>Novel Settings</span><span class="status">Local setup</span></div><div class="hero-body"><h2>Getting started</h2><p class="lead">Run the local Node.js server, then open the player or designer in your browser. A demo project is created automatically on first run.</p><div class="flow"><div class="flow-item"><strong>Player</strong><span>http://localhost:3000/</span></div><div class="flow-item"><strong>Designer</strong><span>http://localhost:3000/editor.html</span></div><div class="flow-item"><strong>Custom host</strong><span>--host=0.0.0.0</span></div></div></div></div><div class="terminal" aria-label="Installation commands"><div class="terminal-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div><pre><code># Clone VNFairy
+    <section class="section tint" id="setup">
+      <div class="wrap">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">No build pipeline required</span>
+            <h2>Open a terminal. Start making.</h2>
+          </div>
+          <p>VNFairy runs on a small local Node.js server. A demo project appears automatically the first time you start it.</p>
+        </div>
+        <div class="setup">
+          <div class="setup-copy">
+            <h3>Two entry points, one project.</h3>
+            <p>Use the player to play your novels and the designer to create them. When you are ready, Export game produces a static package that can go to GitHub Pages, itch.io, or any web server.</p>
+            <div class="endpoint-list">
+              <div class="endpoint"><strong>Player</strong><code>localhost:3000/</code></div>
+              <div class="endpoint"><strong>Designer</strong><code>localhost:3000/editor.html</code></div>
+              <div class="endpoint"><strong>Custom host</strong><code>node server.js --host=0.0.0.0</code></div>
+            </div>
+          </div>
+          <div class="terminal" aria-label="VNFairy installation commands">
+            <div class="terminal-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+            <pre><code><span class="code-muted"># Clone the repository</span>
 git clone https://github.com/coderkei/VNFairy.git
 cd VNFairy
 
-# Install dependencies
+<span class="code-muted"># Install and run</span>
 npm install
-
-# Start the local server
 node server.js
 
-# Optional custom port / host
-node server.js --port=8080 --host=0.0.0.0</code></pre></div></div></section>
+<span class="code-accent">✓ Open http://localhost:3000/editor.html</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
 
-    <section id="license"><div class="wrap"><div class="cta"><h2>Open source, creator friendly</h2><p>VNFairy is licensed under GNU GPL version 3 or later. Visual novels exported using the Releases feature can be distributed under your own chosen licence when they include an unmodified copy of the VNFairy Player.</p><div class="hero-actions" style="justify-content:center;margin:0;"><a class="btn primary" href="https://github.com/coderkei/VNFairy" target="_blank" rel="noreferrer">View on GitHub</a><a class="btn" href="https://github.com/coderkei/VNFairy/issues" target="_blank" rel="noreferrer">Report an issue</a><a class="btn" href="https://github.com/coderkei/VNFairy/tree/main/screenshots" target="_blank" rel="noreferrer">View screenshots</a></div></div></div></section>
+    <section class="section" aria-labelledby="more-screenshots-heading">
+      <div class="wrap">
+        <div class="section-heading">
+          <div><span class="eyebrow">Inside the player</span><h2 id="more-screenshots-heading">A world beyond the editor.</h2></div>
+          <p>Use the same engine to deliver animated title screens, atmospheric backgrounds, character performances, and a complete in-game HUD.</p>
+        </div>
+        <div class="gallery-grid">
+          <a class="gallery-card" href="../screenshots/vn2.png" target="_blank" rel="noreferrer">
+            <img src="../screenshots/vn2.png" alt="VNFairy player showing a character in a cafe scene with dialogue">
+            <span class="gallery-label"><small>Player preview</small><strong>Let the scene breathe.</strong></span>
+          </a>
+          <a class="gallery-card" href="../screenshots/title.png" target="_blank" rel="noreferrer">
+            <img src="../screenshots/title.png" alt="VNFairy title screen for Haruka Days with new game, load game, gallery, achievements, and options">
+            <span class="gallery-label"><small>Title screen</small><strong>Start with an invitation.</strong></span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="closing" id="open-source">
+      <div class="wrap">
+        <span class="eyebrow">Open source, creator friendly</span>
+        <h2>Give your story somewhere to go.</h2>
+        <p>VNFairy is licensed under GNU GPL version 3 or later, with an exception that allows exported novels to use their own distribution license when they include an unmodified VNFairy Player.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="https://github.com/coderkei/VNFairy" target="_blank" rel="noreferrer">View VNFairy on GitHub <span aria-hidden="true">↗</span></a>
+          <a class="button" href="https://github.com/coderkei/VNFairy/issues" target="_blank" rel="noreferrer">Report an issue</a>
+        </div>
+      </div>
+    </section>
   </main>
-  <footer><div class="wrap footer-inner"><div>Made for VNFairy by coderkei. 🧚</div><div class="footer-links"><a href="https://github.com/coderkei/VNFairy" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/coderkei/VNFairy/releases" target="_blank" rel="noreferrer">Releases</a><a href="https://github.com/coderkei/VNFairy#readme" target="_blank" rel="noreferrer">README</a></div></div></footer>
+
+  <footer>
+    <div class="wrap footer-inner">
+      <span>VNFairy · a visual novel engine and story studio</span>
+      <span class="footer-links"><a href="https://github.com/coderkei/VNFairy/releases" target="_blank" rel="noreferrer">Releases</a><a href="https://github.com/coderkei/VNFairy#readme" target="_blank" rel="noreferrer">README</a><a href="https://github.com/coderkei/VNFairy/tree/main/screenshots" target="_blank" rel="noreferrer">Screenshots</a></span>
+    </div>
+  </footer>
 </body>
 </html>
-
