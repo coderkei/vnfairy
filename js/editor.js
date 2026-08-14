@@ -30,6 +30,8 @@ class VNFairyEditor {
     this.editingCharacterId = null;
     this.selectedAssetKeys = new Set();
     this.selectedSceneIds = new Set();
+    this.activeUniversalSelect = null;
+    this.activeAssetReplacement = null;
 
     this.saveTimeout = null;
     this.undoStack = [];
@@ -329,9 +331,9 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     this.loadProjectMeta();
     this.refreshScenesTree();
     this.populateSceneGroupSelect();
+    this.populateAssetDropdowns();
     this.refreshSettingsTab();
     this.renderAssetsTab();
-    this.populateAssetDropdowns();
     const selectedScene = this.project.startSceneId && this.project.scenes[this.project.startSceneId]
       ? this.project.startSceneId
       : Object.keys(this.project.scenes || {})[0];
@@ -347,8 +349,17 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   loadLocalRecovery() {
     try {
-      const raw = localStorage.getItem(this.localRecoveryKey()) || localStorage.getItem('vnfairy_sandbox_project');
-      return raw ? JSON.parse(raw) : null;
+      // A named project must never inherit the old global sandbox recovery
+      // record. VNFairy 1.x used `vnfairy_sandbox_project` for all editor
+      // saves, so using it here can replace a real project's data with an
+      // unrelated blank sandbox while playback still loads the disk project.
+      let raw = localStorage.getItem(this.localRecoveryKey());
+      if (!raw && !this.projectId) raw = localStorage.getItem('vnfairy_sandbox_project');
+      if (!raw) return null;
+
+      const recovery = JSON.parse(raw);
+      if (this.projectId && recovery && recovery.id && recovery.id !== this.projectId) return null;
+      return recovery;
     } catch (err) {
       console.warn('Local recovery data could not be read.', err);
       return null;
@@ -366,7 +377,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       config: {
         kineticMode: false,
         textSpeed: 40,
-        titleScreen: { background: "", music: "", titleColor: "#ffffff", subtitleColor: "#a5d6a7" },
+        titleScreen: { background: "", music: "", titleColor: "#ffffff", subtitleColor: "#a5d6a7", menuFontSize: 1.1 },
         credits: { background: "", music: "", text: "Built offline with VNFairy" },
         galleryEnabled: false,
         galleryCharactersEnabled: false,
@@ -437,6 +448,8 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     this.project.config.titleScreen.music = document.getElementById('settings-title-music').value;
     this.project.config.titleScreen.titleColor = document.getElementById('settings-title-color').value;
     this.project.config.titleScreen.menuLayout = document.getElementById('settings-title-layout').value;
+    const menuFontSize = parseFloat(document.getElementById('settings-menu-font-size').value);
+    this.project.config.titleScreen.menuFontSize = Number.isFinite(menuFontSize) ? menuFontSize : 1.1;
     this.project.config.titleScreen.hideTitleText = document.getElementById('settings-hide-title-text').checked;
     this.project.config.titleScreen.noShading = document.getElementById('settings-no-shading').checked;
     this.project.config.titleScreen.menuButtonColor = document.getElementById('settings-menu-btn-color').value;
@@ -644,7 +657,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     this.renderAssetFileList('bg', document.getElementById('asset-bg-list'), queries.bg, record => this.renderImageAssetCard('bg', record));
     this.renderAssetFileList('music', document.getElementById('asset-music-list'), queries.music, record => this.renderAudioAssetItem('music', record));
     this.renderAssetFileList('sound', document.getElementById('asset-sound-list'), queries.sound, record => this.renderAudioAssetItem('sound', record));
-    this.renderAssetFileList('video', document.getElementById('asset-video-list'), queries.video, record => this.renderAudioAssetItem('video', record));
+    this.renderAssetFileList('video', document.getElementById('asset-video-list'), queries.video, record => this.renderVideoAssetCard(record));
 
     const charAssetList = document.getElementById('asset-char-list');
     if (charAssetList) {
@@ -654,7 +667,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       spriteHeading.textContent = 'Sprite files';
       charAssetList.appendChild(spriteHeading);
       const spriteGrid = document.createElement('div');
-      spriteGrid.className = 'asset-grid';
+      spriteGrid.className = 'asset-grid management-asset-grid management-character-sprite-grid';
       this.getAssetRecords('char').filter(record => this.assetMatches('char', record, queries.char)).forEach(record => spriteGrid.appendChild(this.renderImageAssetCard('char', record)));
       if (!spriteGrid.children.length) spriteGrid.innerHTML = '<div class="muted asset-empty-state">No matching sprite files.</div>';
       charAssetList.appendChild(spriteGrid);
@@ -662,6 +675,8 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       characterHeading.className = 'asset-subsection-heading';
       characterHeading.textContent = 'Characters and default expressions';
       charAssetList.appendChild(characterHeading);
+      const characterGrid = document.createElement('div');
+      characterGrid.className = 'character-assets-grid';
       const projectChars = this.project.assets.characters || [];
       projectChars.filter(char => !queries.char || String(char.name || char.id).toLowerCase().includes(queries.char)).forEach(char => {
         const div = document.createElement('div');
@@ -679,14 +694,30 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         sprites.className = 'char-sprites-grid';
         (char.sprites || []).forEach(sprite => {
           const spriteCard = document.createElement('div');
-          spriteCard.className = 'char-sprite-card';
+          spriteCard.className = 'char-sprite-card is-previewable';
           spriteCard.title = `${sprite.name || sprite.id}${sprite.id === char.defaultExpression ? ' · default' : ''}`;
           spriteCard.innerHTML = `<img src="${this.escapeHtml(sprite.path || '')}" alt="${this.escapeHtml(sprite.name || sprite.id)}">`;
+          if (sprite.path) {
+            spriteCard.onclick = event => {
+              event.stopPropagation();
+              this.previewImageAsset(sprite.path, sprite.name || sprite.id);
+            };
+          }
           sprites.appendChild(spriteCard);
         });
         div.appendChild(sprites);
-        charAssetList.appendChild(div);
+        const defaultSprite = (char.sprites || []).find(sprite => sprite.id === char.defaultExpression) || (char.sprites || [])[0];
+        if (defaultSprite?.path) {
+          div.classList.add('is-previewable');
+          div.onclick = event => {
+            if (event.target.closest('button')) return;
+            this.previewImageAsset(defaultSprite.path, char.name || char.id);
+          };
+        }
+        characterGrid.appendChild(div);
       });
+      if (!characterGrid.children.length) characterGrid.innerHTML = '<div class="muted asset-empty-state">No matching configured characters.</div>';
+      charAssetList.appendChild(characterGrid);
     }
     this.renderAssetSidebarOverview();
     this.updateAssetSelectionUI();
@@ -1583,7 +1614,6 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       header.innerHTML = `
         <div class="scene-group-title" onclick="window.editor.toggleGroup('${group.id}')">
           <span class="group-arrow">${isCollapsed ? '▶' : '▼'}</span>
-          <span class="group-folder">Group</span>
           <span class="group-name-text" title="${group.name}">${group.name}</span>
         </div>
         <div class="group-actions">
@@ -3010,14 +3040,86 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   renderImageAssetCard(type, record) {
     const card = document.createElement('div');
-    card.className = `asset-card asset-library-card${record.metadata.usageCount ? '' : ' is-unused'}`;
+    card.className = `asset-card asset-library-card is-previewable${record.metadata.usageCount ? '' : ' is-unused'}`;
     const assetKey = `${type}:${record.filename}`;
+    const assetPath = this.assetUrl(type, record.filename);
     card.dataset.assetKey = assetKey;
-    card.innerHTML = `<label class="asset-select-control" title="Select asset"><input type="checkbox" aria-label="Select ${this.escapeHtml(record.filename)}" ${this.selectedAssetKeys.has(assetKey) ? 'checked' : ''}><span></span></label><img class="asset-thumbnail" loading="lazy" src="${this.assetUrl(type, record.filename)}" alt="${this.escapeHtml(record.filename)}"><div class="asset-card-overlay"><div class="asset-card-name" title="${this.escapeHtml(record.filename)}">${this.escapeHtml(record.filename)}</div></div><div class="asset-card-details"><span title="${this.escapeHtml(record.metadata.detectedType || 'Unknown type')}">${this.escapeHtml(record.filename)}</span><span class="muted">${this.formatAssetBytes(record.metadata.size)} · ${record.metadata.usageCount || 0} use${record.metadata.usageCount === 1 ? '' : 's'}</span></div>${this.renderAssetControls(type, record)}`;
+    card.innerHTML = `<label class="asset-select-control" title="Select asset"><input type="checkbox" aria-label="Select ${this.escapeHtml(record.filename)}" ${this.selectedAssetKeys.has(assetKey) ? 'checked' : ''}><span></span></label><img class="asset-thumbnail" loading="lazy" src="${this.escapeHtml(assetPath)}" alt="${this.escapeHtml(record.filename)}"><div class="asset-card-details"><span title="${this.escapeHtml(record.metadata.detectedType || 'Unknown type')}">${this.escapeHtml(record.filename)}</span><span class="muted">${this.formatAssetBytes(record.metadata.size)} · ${record.metadata.usageCount || 0} use${record.metadata.usageCount === 1 ? '' : 's'}</span></div>${this.renderAssetControls(type, record)}`;
     card.querySelector('.asset-select-control input').onchange = event => this.setAssetSelected(assetKey, event.target.checked);
+    card.onclick = event => {
+      if (event.target.closest('button, input, select, label, .asset-library-actions, .asset-library-meta')) return;
+      this.previewImageAsset(assetPath, record.filename);
+    };
     const image = card.querySelector('.asset-thumbnail');
     if (image) image.onload = () => this.generateImageThumbnail(image);
     this.attachAssetControls(card, type, record);
+    return card;
+  }
+
+  previewImageAsset(path, label = 'Asset preview') {
+    if (!path) return;
+    const existing = document.getElementById('asset-image-preview-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'asset-image-preview-overlay';
+    overlay.className = 'asset-image-preview-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', `${label} preview`);
+
+    const dialog = document.createElement('div');
+    dialog.className = 'asset-image-preview-dialog';
+    const image = document.createElement('img');
+    image.className = 'asset-image-preview-image';
+    image.src = path;
+    image.alt = label;
+    image.decoding = 'async';
+    const caption = document.createElement('div');
+    caption.className = 'asset-image-preview-caption';
+    caption.textContent = label;
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'asset-image-preview-close';
+    closeButton.setAttribute('aria-label', 'Close image preview');
+    closeButton.textContent = '×';
+    dialog.append(image, caption, closeButton);
+    overlay.appendChild(dialog);
+
+    const closePreview = () => {
+      document.removeEventListener('keydown', onKeyDown);
+      overlay.remove();
+    };
+    const onKeyDown = event => {
+      if (event.key === 'Escape') closePreview();
+    };
+    closeButton.onclick = closePreview;
+    overlay.onclick = event => {
+      if (event.target === overlay) closePreview();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.body.appendChild(overlay);
+  }
+
+  renderVideoAssetCard(record) {
+    const card = document.createElement('div');
+    card.className = `asset-card asset-library-card asset-video-card${record.metadata.usageCount ? '' : ' is-unused'}`;
+    const assetKey = `video:${record.filename}`;
+    const videoPath = this.assetUrl('video', record.filename);
+    card.dataset.assetKey = assetKey;
+    card.innerHTML = `<label class="asset-select-control" title="Select asset"><input type="checkbox" aria-label="Select ${this.escapeHtml(record.filename)}" ${this.selectedAssetKeys.has(assetKey) ? 'checked' : ''}><span></span></label><div class="asset-video-thumbnail-wrap"><video class="asset-video-thumbnail" muted playsinline preload="metadata" src="${this.escapeHtml(videoPath)}" aria-label="Preview of ${this.escapeHtml(record.filename)}"></video><span class="asset-video-placeholder" aria-hidden="true">▶</span></div><div class="asset-card-details"><span title="${this.escapeHtml(record.metadata.detectedType || 'Video')}">${this.escapeHtml(record.filename)}</span><span class="muted">${this.formatAssetBytes(record.metadata.size)} · ${record.metadata.usageCount || 0} use${record.metadata.usageCount === 1 ? '' : 's'}</span></div><div class="asset-video-actions"><button type="button" class="voice-btn-preview" data-asset-action="preview">▶ Preview</button></div>${this.renderAssetControls('video', record)}`;
+    card.querySelector('.asset-select-control input').onchange = event => this.setAssetSelected(assetKey, event.target.checked);
+    const video = card.querySelector('.asset-video-thumbnail');
+    if (video) {
+      video.onloadeddata = () => {
+        video.currentTime = 0;
+        card.classList.add('has-video-frame');
+      };
+      video.onerror = () => card.classList.add('video-load-failed');
+    }
+    const previewButton = card.querySelector('[data-asset-action="preview"]');
+    if (previewButton) previewButton.onclick = () => this.previewUniversalVideo(record.filename, previewButton);
+    this.attachAssetControls(card, 'video', record);
     return card;
   }
 
@@ -3045,7 +3147,8 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     item.className = `audio-asset-item asset-library-audio${record.metadata.usageCount ? '' : ' is-unused'}`;
     const assetKey = `${type}:${record.filename}`;
     item.dataset.assetKey = assetKey;
-    item.innerHTML = `<label class="asset-select-control asset-select-inline" title="Select asset"><input type="checkbox" aria-label="Select ${this.escapeHtml(record.filename)}" ${this.selectedAssetKeys.has(assetKey) ? 'checked' : ''}><span></span></label><div class="audio-preview-wrap"><canvas class="audio-waveform" width="96" height="28" aria-label="Waveform preview"></canvas></div><div class="audio-asset-copy"><span class="asset-name"><span class="asset-type-badge">${type === 'music' ? 'Music' : type === 'sound' ? 'Voice' : 'Video'}</span>${this.escapeHtml(record.filename)}</span><span class="muted audio-asset-detail">${this.formatAssetBytes(record.metadata.size)} · ${record.metadata.usageCount || 0} use${record.metadata.usageCount === 1 ? '' : 's'}${type !== 'video' ? ' · duration loading…' : ''}</span></div><div class="audio-asset-actions"><button type="button" data-asset-action="favorite" class="asset-favorite-btn" title="${record.library.favorite ? 'Remove from favourites' : 'Add to favourites'}">${record.library.favorite ? '★' : '☆'}</button><button type="button" data-asset-action="usage" class="scene-action-btn">Uses</button><button type="button" data-asset-action="replace" class="scene-action-btn">Replace everywhere</button><button type="button" data-asset-action="delete" class="scene-action-btn btn-danger-text">Delete</button></div>${this.renderAssetControls(type, record)}`;
+    const previewButton = type === 'music' || type === 'sound' ? '<button type="button" data-asset-action="preview" class="voice-btn-preview">▶ Preview</button>' : '';
+    item.innerHTML = `<label class="asset-select-control asset-select-inline" title="Select asset"><input type="checkbox" aria-label="Select ${this.escapeHtml(record.filename)}" ${this.selectedAssetKeys.has(assetKey) ? 'checked' : ''}><span></span></label><div class="audio-asset-copy"><span class="asset-name"><span class="asset-type-badge">${type === 'music' ? 'Music' : type === 'sound' ? 'Voice' : 'Video'}</span>${this.escapeHtml(record.filename)}</span><span class="muted audio-asset-detail">${this.formatAssetBytes(record.metadata.size)} · ${record.metadata.usageCount || 0} use${record.metadata.usageCount === 1 ? '' : 's'}</span></div><div class="audio-asset-actions">${previewButton}<button type="button" data-asset-action="favorite" class="asset-favorite-btn" title="${record.library.favorite ? 'Remove from favourites' : 'Add to favourites'}">${record.library.favorite ? '★' : '☆'}</button><button type="button" data-asset-action="usage" class="scene-action-btn">Uses</button><button type="button" data-asset-action="replace" class="scene-action-btn">Replace everywhere</button><button type="button" data-asset-action="delete" class="scene-action-btn btn-danger-text">Delete</button></div>${this.renderAssetControls(type, record)}`;
     item.querySelector('.asset-select-control input').onchange = event => this.setAssetSelected(assetKey, event.target.checked);
     item.querySelector('.asset-library-actions').classList.add('hidden');
     this.attachAssetControls(item, type, record);
@@ -3053,58 +3156,22 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     item.querySelector('[data-asset-action="usage"]').onclick = () => this.showAssetUsage(type, record.filename);
     item.querySelector('[data-asset-action="replace"]').onclick = () => this.replaceAssetEverywhere(type, record.filename);
     item.querySelector('[data-asset-action="delete"]').onclick = event => this.deleteAsset(type, record.filename, event);
-    if (type !== 'video') this.prepareAudioPreview(item, type, record.filename);
+    const preview = item.querySelector('[data-asset-action="preview"]');
+    if (preview) preview.onclick = () => this.previewUniversalAsset(type, record.filename, preview);
+    if (type !== 'video') this.prepareAudioMetadata(item, type, record.filename);
     return item;
   }
 
-  prepareAudioPreview(item, type, filename) {
-    const canvas = item.querySelector('.audio-waveform');
+  prepareAudioMetadata(item, type, filename) {
     const detail = item.querySelector('.audio-asset-detail');
-    if (!canvas) return;
-    const drawFallback = () => {
-      const context = canvas.getContext('2d');
-      if (!context) return;
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--primary') || '#a5d6a7';
-      context.beginPath();
-      for (let index = 0; index < canvas.width; index += 1) {
-        const height = 4 + ((index * 17) % 17);
-        context.moveTo(index, canvas.height / 2 - height / 2);
-        context.lineTo(index, canvas.height / 2 + height / 2);
-      }
-      context.stroke();
-    };
-    drawFallback();
+    if (!detail) return;
     const audio = document.createElement('audio');
     audio.preload = 'metadata';
     audio.src = this.assetUrl(type, filename);
     audio.onloadedmetadata = () => {
       const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
-      if (detail && duration) detail.textContent = `${this.formatAssetBytes(this.getAssetMeta(type, filename).size)} · ${this.formatDuration(duration)} · ${this.getAssetMeta(type, filename).usageCount || 0} uses`;
+      if (duration) detail.textContent = `${this.formatAssetBytes(this.getAssetMeta(type, filename).size)} · ${this.formatDuration(duration)} · ${this.getAssetMeta(type, filename).usageCount || 0} use${this.getAssetMeta(type, filename).usageCount === 1 ? '' : 's'}`;
     };
-    fetch(this.assetUrl(type, filename)).then(response => response.arrayBuffer()).then(buffer => {
-      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) return;
-      const context = new AudioContextCtor();
-      return context.decodeAudioData(buffer).then(decoded => {
-        const data = decoded.getChannelData(0);
-        const draw = canvas.getContext('2d');
-        if (!draw) return;
-        draw.clearRect(0, 0, canvas.width, canvas.height);
-        draw.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--primary') || '#a5d6a7';
-        draw.beginPath();
-        for (let x = 0; x < canvas.width; x += 1) {
-          const start = Math.floor((x / canvas.width) * data.length);
-          const end = Math.max(start + 1, Math.floor(((x + 1) / canvas.width) * data.length));
-          let peak = 0;
-          for (let sample = start; sample < end; sample += 1) peak = Math.max(peak, Math.abs(data[sample] || 0));
-          draw.moveTo(x, canvas.height / 2 - peak * canvas.height / 2);
-          draw.lineTo(x, canvas.height / 2 + peak * canvas.height / 2);
-        }
-        draw.stroke();
-        context.close().catch(() => {});
-      });
-    }).catch(() => {});
   }
 
   formatDuration(seconds) {
@@ -3163,14 +3230,41 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     modal.classList.remove('hidden');
   }
 
+  assetIdFromFilename(filename) {
+    const registry = window.VNFairyCore && window.VNFairyCore.assetRegistry;
+    return registry ? registry.assetIdFromFilename(filename) : String(filename || '').replace(/\.[^/.]+$/, '');
+  }
+
+  openAssetReplacementModal(type, filename) {
+    const candidates = this.getAssetFilenames(type).filter(candidate => candidate !== filename);
+    if (!candidates.length) return;
+
+    const pickerType = type === 'char' ? 'char-sprite-file' : type;
+    const select = document.createElement('select');
+    select.setAttribute('data-asset-type', pickerType);
+    candidates.forEach(candidate => {
+      const option = document.createElement('option');
+      option.value = pickerType === 'char-sprite-file' ? candidate : this.assetIdFromFilename(candidate);
+      option.textContent = candidate;
+      select.appendChild(option);
+    });
+
+    this.activeAssetReplacement = { type, filename, pickerType };
+    this.activeUniversalSelect = select;
+    this.presentUniversalSelectModal(pickerType, `Replace “${filename}”`, false);
+  }
+
   replaceAssetEverywhere(type, filename) {
     const candidates = this.getAssetFilenames(type).filter(candidate => candidate !== filename);
     if (!candidates.length) {
       this.showToast('Upload another asset in this category before replacing references.');
       return;
     }
-    const target = prompt(`Replace “${filename}” everywhere with one of these files:\n${candidates.join('\n')}\n\nEnter the target filename exactly.`);
-    if (!target || !candidates.includes(target)) return;
+    this.openAssetReplacementModal(type, filename);
+  }
+
+  replaceAssetReferences(type, filename, target) {
+    if (!target || target === filename || !this.getAssetFilenames(type).includes(target)) return;
     const registry = window.VNFairyCore && window.VNFairyCore.assetRegistry;
     const oldPath = registry ? registry.assetPath(this.project.id, type, filename) : `data/projects/${this.project.id}/assets/${type}/${filename}`;
     const newPath = registry ? registry.assetPath(this.project.id, type, target) : `data/projects/${this.project.id}/assets/${type}/${target}`;
@@ -3821,6 +3915,9 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     document.getElementById('settings-title-music').value = titleConfig.music || "";
     document.getElementById('settings-title-color').value = titleConfig.titleColor || "#ffffff";
     document.getElementById('settings-title-layout').value = titleConfig.menuLayout || "left";
+    const menuFontSize = Number.isFinite(Number(titleConfig.menuFontSize)) ? Math.min(2, Math.max(0.75, Number(titleConfig.menuFontSize))) : 1.1;
+    document.getElementById('settings-menu-font-size').value = menuFontSize;
+    document.getElementById('val-title-menu-font-size').innerText = menuFontSize + 'rem';
     document.getElementById('settings-hide-title-text').checked = !!titleConfig.hideTitleText;
     document.getElementById('settings-no-shading').checked = !!titleConfig.noShading;
     document.getElementById('settings-menu-btn-color').value = titleConfig.menuButtonColor || "#ffffff";
@@ -4044,9 +4141,6 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         });
       }
     });
-    const defaultExpressionSelect = document.getElementById('char-default-expression-select');
-    const defaultExpression = defaultExpressionSelect?.value || sprites[0]?.id || '';
-
     const ROUTE_GAP = 24;
     const ROUTE_BEND_RADIUS = 9;
     const svgNS = 'http://www.w3.org/2000/svg';
@@ -5053,6 +5147,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       'settings-title-music',
       'settings-title-color',
       'settings-title-layout',
+      'settings-menu-font-size',
       'settings-hide-title-text',
       'settings-no-shading',
       'settings-menu-btn-color',
@@ -5518,11 +5613,32 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   }
 
   openUniversalSelectModal(select) {
+    this.activeAssetReplacement = null;
     this.activeUniversalSelect = select;
     const assetType = select.getAttribute('data-asset-type');
-    
+    const titleText = this.universalSelectTitle(assetType);
+    this.presentUniversalSelectModal(assetType, titleText, true);
+  }
+
+  universalSelectTitle(assetType) {
+    if (assetType === 'bg') return 'Select Background';
+    if (assetType === 'music') return 'Select Music BGM';
+    if (assetType === 'sound') return 'Select Sound / Voice Clip';
+    if (assetType === 'video') return 'Select Video Cutscene';
+    if (assetType === 'char') return 'Select Character';
+    if (assetType === 'speaker') return 'Select Speaker';
+    if (assetType === 'expression') return 'Select Character Expression';
+    if (assetType === 'char-sprite-file') return 'Select Sprite Image File';
+    if (assetType === 'scene') return 'Select Destination Scene';
+    if (assetType === 'ending') return 'Select Ending Trigger';
+    return 'Select Option';
+  }
+
+  presentUniversalSelectModal(assetType, titleText, allowUpload = true) {
     if (this.previewAudioElement) {
       this.previewAudioElement.pause();
+      const previousButton = this.previewAudioElement.btn;
+      if (previousButton) previousButton.innerText = '▶ Preview';
       this.previewAudioElement = null;
     }
     
@@ -5530,18 +5646,16 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     modal.classList.remove('hidden');
     
     const title = document.getElementById('universal-modal-title');
-    let titleText = "Select Option";
-    if (assetType === 'bg') titleText = "Select Background";
-    else if (assetType === 'music') titleText = "Select Music BGM";
-    else if (assetType === 'sound') titleText = "Select Sound / Voice Clip";
-    else if (assetType === 'video') titleText = "Select Video Cutscene";
-    else if (assetType === 'char') titleText = "Select Character";
-    else if (assetType === 'speaker') titleText = "Select Speaker";
-    else if (assetType === 'expression') titleText = "Select Character Expression";
-    else if (assetType === 'char-sprite-file') titleText = "Select Sprite Image File";
-    else if (assetType === 'scene') titleText = "Select Destination Scene";
-    else if (assetType === 'ending') titleText = "Select Ending Trigger";
     title.innerText = titleText;
+
+    const description = document.getElementById('universal-modal-description');
+    if (description) {
+      const replacement = this.activeAssetReplacement;
+      description.textContent = replacement
+        ? `Choose a replacement for “${replacement.filename}”. References will be updated after you select an asset.`
+        : '';
+      description.classList.toggle('hidden', !replacement);
+    }
     
     const searchInput = document.getElementById('universal-search-input');
     searchInput.placeholder = assetType === 'speaker' ? 'Search speakers...' : `Search ${titleText.toLowerCase()}...`;
@@ -5555,7 +5669,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       'video': 'video',
       'char-sprite-file': 'char'
     };
-    if (uploadTypes[assetType]) {
+    if (allowUpload && uploadTypes[assetType]) {
       uploadBtn.style.display = 'block';
       uploadBtn.onclick = () => {
         this.triggerAssetUpload(uploadTypes[assetType]);
@@ -5576,6 +5690,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     if (!select) return;
     const assetType = select.getAttribute('data-asset-type');
     const currentVal = select.value;
+    const isReplacementMode = !!this.activeAssetReplacement;
     
     const list = document.getElementById('universal-modal-list');
     list.innerHTML = "";
@@ -5702,7 +5817,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 4px;">
             <div class="universal-item-title" title="${label}">${label}</div>
             <button type="button" class="voice-btn-select" style="width: 100%; margin-top: 4px;" onclick="window.editor.selectUniversalItem('${val}')">
-              ${isCurrent ? 'Selected' : 'Select'}
+              ${isCurrent ? 'Selected' : isReplacementMode ? 'Replace with this' : 'Select'}
             </button>
           </div>
         `;
@@ -5714,7 +5829,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           <div class="voice-actions">
             ${actionsHtml}
             <button type="button" class="voice-btn-select" onclick="window.editor.selectUniversalItem('${val}')">
-              ${isCurrent ? 'Selected' : 'Select'}
+              ${isCurrent ? 'Selected' : isReplacementMode ? 'Replace with this' : 'Select'}
             </button>
           </div>
         `;
@@ -5725,6 +5840,11 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   }
 
   previewUniversalAsset(folder, filename, btnElem) {
+    const videoPreview = document.getElementById('universal-video-preview-overlay');
+    if (videoPreview) {
+      if (videoPreview.previewButton) videoPreview.previewButton.innerText = "▶ Preview";
+      videoPreview.remove();
+    }
     if (this.previewAudioElement) {
       this.previewAudioElement.pause();
       const prevBtn = this.previewAudioElement.btn;
@@ -5736,7 +5856,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       }
     }
 
-    const path = `data/projects/${this.projectId || 'demo'}/assets/${folder}/${filename}`;
+    const path = this.assetUrl(folder, filename);
     const audio = new Audio(path);
     audio.filename = filename;
     audio.btn = btnElem;
@@ -5790,6 +5910,12 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   }
 
   previewUniversalVideo(filename, btnElem) {
+    if (this.previewAudioElement) {
+      this.previewAudioElement.pause();
+      const previousButton = this.previewAudioElement.btn;
+      if (previousButton) previousButton.innerText = "▶ Preview";
+      this.previewAudioElement = null;
+    }
     const existing = document.getElementById('universal-video-preview-overlay');
     if (existing) {
       existing.remove();
@@ -5804,7 +5930,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       if (btn.innerText === "⏹ Stop") btn.innerText = "▶ Preview";
     });
 
-    const path = `data/projects/${this.projectId || 'demo'}/assets/video/${filename}`;
+    const path = this.assetUrl('video', filename);
     
     const overlay = document.createElement('div');
     overlay.id = 'universal-video-preview-overlay';
@@ -5824,23 +5950,30 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     overlay.innerHTML = `
       <div style="position:relative; width:80%; max-width:700px; aspect-ratio:16/9; background:#000; border-radius:12px; overflow:hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
         <video src="${path}" controls autoplay style="width:100%; height:100%; object-fit:contain;"></video>
-        <button style="position:absolute; top:15px; right:15px; background:rgba(0,0,0,0.5); border:none; color:white; font-size:1.5rem; width:40px; height:40px; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center; hover:background:rgba(0,0,0,0.8);" onclick="this.closest('#universal-video-preview-overlay').remove()">&times;</button>
+        <button type="button" class="asset-video-preview-close" aria-label="Close video preview">&times;</button>
       </div>
       <div style="color:white; font-weight:600;">${filename}</div>
     `;
     
     document.body.appendChild(overlay);
     btnElem.innerText = "⏹ Stop";
+    overlay.previewButton = btnElem;
+
+    const closePreview = () => {
+      if (overlay.previewButton) overlay.previewButton.innerText = "▶ Preview";
+      const video = overlay.querySelector('video');
+      if (video) video.pause();
+      overlay.remove();
+    };
+    overlay.querySelector('.asset-video-preview-close').onclick = closePreview;
     
     overlay.querySelector('video').onended = () => {
-      btnElem.innerText = "▶ Preview";
-      overlay.remove();
+      closePreview();
     };
     
     overlay.onclick = (e) => {
       if (e.target === overlay) {
-        btnElem.innerText = "▶ Preview";
-        overlay.remove();
+        closePreview();
       }
     };
   }
@@ -5848,6 +5981,8 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   selectUniversalItem(val) {
     const select = this.activeUniversalSelect;
     if (!select) return;
+
+    const replacement = this.activeAssetReplacement;
     
     this.playSynthSFX('click');
     
@@ -5857,10 +5992,29 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     }
     
     const videoPreview = document.getElementById('universal-video-preview-overlay');
-    if (videoPreview) videoPreview.remove();
+    if (videoPreview) {
+      if (videoPreview.previewButton) videoPreview.previewButton.innerText = '▶ Preview';
+      videoPreview.remove();
+    }
+
+    if (replacement) {
+      const target = this.getAssetFilenames(replacement.type).find(candidate => {
+        const candidateValue = replacement.pickerType === 'char-sprite-file'
+          ? candidate
+          : this.assetIdFromFilename(candidate);
+        return candidateValue === val;
+      });
+      if (!target || target === replacement.filename) return;
+      this.activeAssetReplacement = null;
+      this.activeUniversalSelect = null;
+      document.getElementById('universal-select-modal').classList.add('hidden');
+      this.replaceAssetReferences(replacement.type, replacement.filename, target);
+      return;
+    }
     
     select.value = val;
     select.dispatchEvent(new Event('change'));
+    this.activeUniversalSelect = null;
     
     document.getElementById('universal-select-modal').classList.add('hidden');
   }
@@ -6110,6 +6264,10 @@ function closeTestPlay() {
 
 // Global modal closer
 function closeModal(id) {
+  if (id === 'universal-select-modal' && window.editor) {
+    window.editor.activeUniversalSelect = null;
+    window.editor.activeAssetReplacement = null;
+  }
   if (window.VNFairyModalControls) {
     window.VNFairyModalControls.close(id);
     return;

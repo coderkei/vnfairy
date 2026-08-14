@@ -91,17 +91,10 @@ const demoAssetsDir = path.join(demoDir, 'assets');
 const legacyProjectPath = path.join(DATA_DIR, 'project.json');
 const oldDemoProjectPath = path.join(PROJECTS_DIR, 'demo.json');
 
-// Ensure demo folders exist
-if (!fs.existsSync(demoDir)) fs.mkdirSync(demoDir, { recursive: true });
-if (!fs.existsSync(demoAssetsDir)) fs.mkdirSync(demoAssetsDir, { recursive: true });
-assetTypes.forEach(type => {
-  const p = path.join(demoAssetsDir, type);
-  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
-});
-
 // Auto-migrate legacy project configurations
 if (fs.existsSync(legacyProjectPath) && !fs.existsSync(demoProjectPath)) {
   try {
+    fs.mkdirSync(demoDir, { recursive: true });
     fs.copyFileSync(legacyProjectPath, demoProjectPath);
     console.log("Migrated legacy project.json to data/projects/demo/project.json");
   } catch (err) {
@@ -109,6 +102,7 @@ if (fs.existsSync(legacyProjectPath) && !fs.existsSync(demoProjectPath)) {
   }
 } else if (fs.existsSync(oldDemoProjectPath) && !fs.existsSync(demoProjectPath)) {
   try {
+    fs.mkdirSync(demoDir, { recursive: true });
     fs.copyFileSync(oldDemoProjectPath, demoProjectPath);
     fs.unlinkSync(oldDemoProjectPath);
     console.log("Migrated old data/projects/demo.json to data/projects/demo/project.json");
@@ -122,6 +116,7 @@ if (fs.existsSync(legacyProjectPath) && !fs.existsSync(demoProjectPath)) {
 // Ensure at least one project (demo/project.json) exists
 if (!fs.existsSync(demoProjectPath)) {
   const defaultProject = {
+    id: 'demo',
     artifactType: 'vnfairy-project',
     schemaVersion: 1,
     engineVersion: '2.0.0',
@@ -168,8 +163,22 @@ if (!fs.existsSync(demoProjectPath)) {
       }
     }
   };
-  projectStore.saveProjectSplit('demo', defaultProject);
+  // This is first-run bootstrap, not a replacement of an existing project.
+  // The demo directory may already exist from a partial previous bootstrap,
+  // so avoid the transactional saver trying to rename it as a previous live
+  // project. Existing files in its asset folders are kept.
+  projectStore.writeSplitProjectDirectory(demoDir, 'demo', defaultProject);
 }
+
+// Ensure demo folders exist after bootstrap/migration. Creating the folder
+// before saveProjectSplit makes it look like an existing project on a clean
+// install and can make the transactional replacement fail on Windows.
+if (!fs.existsSync(demoDir)) fs.mkdirSync(demoDir, { recursive: true });
+if (!fs.existsSync(demoAssetsDir)) fs.mkdirSync(demoAssetsDir, { recursive: true });
+assetTypes.forEach(type => {
+  const p = path.join(demoAssetsDir, type);
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+});
 
 // Helper to migrate legacy project asset paths to project-specific folders
 function migrateProjectAssetPaths(projectId, projectData) {

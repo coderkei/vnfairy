@@ -755,6 +755,13 @@ class VNFairyEngine {
     titleContainer.style.removeProperty('--title-bar-bg');
     titleContainer.style.removeProperty('--title-bar-backdrop');
     const layout = titleConfig.menuLayout || 'left';
+    const configuredMenuFontSize = Number(titleConfig.menuFontSize);
+    if (Number.isFinite(configuredMenuFontSize)) {
+      const menuFontSize = Math.min(2, Math.max(0.75, configuredMenuFontSize));
+      titleContainer.style.setProperty('--title-menu-font-size', `${menuFontSize}rem`);
+    } else {
+      titleContainer.style.removeProperty('--title-menu-font-size');
+    }
     if (layout === 'center') {
       titleContainer.classList.add('title-layout-center');
     } else if (layout === 'right') {

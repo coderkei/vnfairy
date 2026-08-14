@@ -166,7 +166,7 @@
   color: var(--title-btn-color, var(--text-main));
   padding: 14px 28px;
   font-family: var(--font-display);
-  font-size: 1.1rem;
+  font-size: var(--title-menu-font-size, 1.1rem);
   font-weight: 500;
   text-align: left;
   border-radius: var(--radius-md);
@@ -305,7 +305,7 @@
   color: var(--title-btn-color, #f3f0ea) !important;
   padding: 8px 24px !important;
   font-family: var(--font-display) !important;
-  font-size: 1.05rem !important;
+  font-size: var(--title-menu-font-size, 1.05rem) !important;
   font-weight: 700 !important;
   letter-spacing: 0.12em !important;
   text-transform: uppercase !important;

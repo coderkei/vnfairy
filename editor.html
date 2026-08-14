@@ -589,6 +589,17 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
               <div class="settings-form-row">
                 <div class="settings-label-group">
+                  <label>Menu Font Size</label>
+                  <span class="sub-label">Adjusts the text size of the title screen menu choices.</span>
+                </div>
+                <div class="settings-control" style="display:flex; align-items:center; gap:10px; width: 220px;">
+                  <input type="range" id="settings-menu-font-size" min="0.75" max="2" step="0.05" value="1.1" style="flex:1; height:36px; accent-color: var(--primary);" oninput="document.getElementById('val-title-menu-font-size').innerText = this.value + 'rem';">
+                  <span id="val-title-menu-font-size" style="font-size:0.82rem; font-weight:600; width:48px; text-align:right;">1.1rem</span>
+                </div>
+              </div>
+
+              <div class="settings-form-row">
+                <div class="settings-label-group">
                   <label>Hide Title & Author Text</label>
                   <span class="sub-label">Useful if your background image already has the game title logo pre-rendered.</span>
                 </div>
@@ -958,7 +969,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
           </section>
           <section class="management-panel hidden" id="asset-panel-char" data-asset-type="char">
             <div class="management-panel-heading"><div><h3>Characters</h3><p class="muted">Sprite files and configured characters.</p></div><div><input type="search" id="search-asset-char" class="input-text" placeholder="Search characters"><button class="btn-secondary" onclick="triggerAssetUpload('char')">Upload art</button><button class="btn-primary" id="btn-add-character">New character</button></div></div>
-            <div class="character-assets-list" id="asset-char-list"></div>
+            <div class="character-assets-list management-character-list" id="asset-char-list"></div>
           </section>
           <section class="management-panel hidden" id="asset-panel-music" data-asset-type="music">
             <div class="management-panel-heading"><div><h3>Music</h3><p class="muted">Background music and title tracks.</p></div><div><input type="search" id="search-asset-music" class="input-text" placeholder="Search music"><button class="btn-primary" onclick="triggerAssetUpload('music')">Upload music</button></div></div>
@@ -970,7 +981,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
           </section>
           <section class="management-panel hidden" id="asset-panel-video" data-asset-type="video">
             <div class="management-panel-heading"><div><h3>Videos</h3><p class="muted">Cutscenes and full-screen video sequences.</p></div><div><input type="search" id="search-asset-video" class="input-text" placeholder="Search videos"><button class="btn-primary" onclick="triggerAssetUpload('video')">Upload video</button></div></div>
-            <div class="audio-assets-list management-audio-list" id="asset-video-list"></div>
+            <div class="asset-grid management-asset-grid management-video-grid" id="asset-video-list"></div>
           </section>
         </div>
         <input type="file" id="asset-file-uploader" class="hidden">
@@ -1235,6 +1246,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
         <button class="modal-close" onclick="closeModal('universal-select-modal')">&times;</button>
       </div>
       <div class="modal-body" style="display:flex; flex-direction:column; gap:16px;">
+        <p id="universal-modal-description" class="muted hidden" style="margin:0;"></p>
         <!-- Search and Quick Upload Header -->
         <div style="display:flex; gap:12px; align-items:center;">
           <input type="text" id="universal-search-input" class="input-text" placeholder="Search assets..." style="flex-grow:1; padding:8px 12px;">

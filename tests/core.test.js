@@ -216,3 +216,41 @@ test('project store persists version metadata and retains a recovery snapshot', 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('project store merges legacy split scene files without replacing them', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vnfairy-legacy-split-'));
+  const projectsDir = path.join(root, 'projects');
+  const recoveryDir = path.join(root, 'recovery');
+  const projectDir = path.join(projectsDir, 'legacy');
+  fs.mkdirSync(path.join(projectDir, 'scenes'), { recursive: true });
+  fs.writeFileSync(path.join(projectDir, 'project.json'), JSON.stringify({
+    id: 'legacy',
+    title: 'Legacy split project',
+    scenes: {
+      start: { id: 'start' },
+      ending: { id: 'ending' }
+    },
+    startSceneId: 'start'
+  }), 'utf8');
+  fs.writeFileSync(path.join(projectDir, 'scenes', 'start.json'), JSON.stringify({
+    id: 'start',
+    dialogue: [{ text: 'Loaded from the legacy scene file', speaker: 'narrator' }],
+    choices: [],
+    nextSceneId: 'ending'
+  }), 'utf8');
+  fs.writeFileSync(path.join(projectDir, 'scenes', 'ending.json'), JSON.stringify({
+    id: 'ending',
+    dialogue: [],
+    choices: []
+  }), 'utf8');
+
+  const store = createProjectStore({ projectsDir, recoveryDir, assetTypes: core.assetRegistry.ASSET_TYPES });
+  try {
+    const project = store.loadProjectMerged('legacy');
+    assert.equal(Object.keys(project.scenes).length, 2);
+    assert.equal(project.scenes.start.dialogue[0].text, 'Loaded from the legacy scene file');
+    assert.equal(fs.readdirSync(path.join(projectDir, 'scenes')).length, 2);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
