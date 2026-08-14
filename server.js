@@ -18,6 +18,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
+const { createProjectStore } = require('./project-store');
+const { createAssetService } = require('./asset-service');
+const { createPackageService } = require('./package-service');
 
 // Parse command line arguments for port & host
 let argPort = null;
@@ -43,6 +46,8 @@ const HOST = argHost || process.env.HOST || process.env.npm_config_host || '127.
 const PUBLIC_DIR = __dirname;
 const DATA_DIR = path.join(PUBLIC_DIR, 'data');
 const PROJECTS_DIR = path.join(DATA_DIR, 'projects');
+const RECOVERY_DIR = path.join(DATA_DIR, 'recovery');
+const MAX_RECOVERY_SNAPSHOTS = 10;
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -53,18 +58,30 @@ const MIME_TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
   '.mp4': 'video/mp4',
-  '.ico': 'image/x-icon'
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+  '.ico': 'image/x-icon',
+  '.vnfairy': 'application/vnd.vnfairy.project+zip'
 };
 
 // Ensure data folders exist
 const assetTypes = ['bg', 'char', 'music', 'sound', 'video'];
+const projectStore = createProjectStore({ projectsDir: PROJECTS_DIR, recoveryDir: RECOVERY_DIR, assetTypes, maxRecoverySnapshots: MAX_RECOVERY_SNAPSHOTS });
+const assetService = createAssetService({ projectsDir: PROJECTS_DIR });
+const packageService = createPackageService({ publicDir: PUBLIC_DIR, projectsDir: PROJECTS_DIR, loadProjectMerged: projectStore.loadProjectMerged });
+const isSafeProjectId = projectStore.isSafeProjectId;
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+if (!fs.existsSync(RECOVERY_DIR)) fs.mkdirSync(RECOVERY_DIR, { recursive: true });
 
 // Setup paths for new project-specific demo folder
 const demoDir = path.join(PROJECTS_DIR, 'demo');
@@ -105,6 +122,10 @@ if (fs.existsSync(legacyProjectPath) && !fs.existsSync(demoProjectPath)) {
 // Ensure at least one project (demo/project.json) exists
 if (!fs.existsSync(demoProjectPath)) {
   const defaultProject = {
+    artifactType: 'vnfairy-project',
+    schemaVersion: 1,
+    engineVersion: '2.0.0',
+    createdWithVersion: '2.0.0',
     title: "VNFairy Demo",
     author: "coderkei",
     config: {
@@ -147,7 +168,7 @@ if (!fs.existsSync(demoProjectPath)) {
       }
     }
   };
-  saveProjectSplit('demo', defaultProject);
+  projectStore.saveProjectSplit('demo', defaultProject);
 }
 
 // Helper to migrate legacy project asset paths to project-specific folders
@@ -199,115 +220,33 @@ function migrateProjectAssetPaths(projectId, projectData) {
   return modified;
 }
 
-// Helper to save a project by splitting its scenes into separate files
-function saveProjectSplit(id, projectData) {
-  const targetPath = path.join(PROJECTS_DIR, id, 'project.json');
-  const scenesDir = path.join(PROJECTS_DIR, id, 'scenes');
-  
-  // Extract and isolate scenes
-  const scenes = projectData.scenes || {};
-  
-  // Create project directory and scenes directory
-  fs.mkdirSync(scenesDir, { recursive: true });
-  
-  const savedSceneFiles = new Set();
-  const metadata = { ...projectData };
-  metadata.id = id;
-  metadata.scenes = {};
-  
-  for (const [sceneId, scene] of Object.entries(scenes)) {
-    const sceneFileName = `${sceneId}.json`;
-    const scenePath = path.join(scenesDir, sceneFileName);
-    
-    // Save scene details to individual file
-    fs.writeFileSync(scenePath, JSON.stringify(scene, null, 2), 'utf8');
-    savedSceneFiles.add(sceneFileName);
-    
-    // Maintain key mapping in metadata
-    metadata.scenes[sceneId] = {
-      id: scene.id,
-      title: scene.title
-    };
-  }
-  
-  // Remove deleted scene files
-  if (fs.existsSync(scenesDir)) {
-    const files = fs.readdirSync(scenesDir);
-    for (const file of files) {
-      if (file.endsWith('.json') && !savedSceneFiles.has(file)) {
-        try {
-          fs.unlinkSync(path.join(scenesDir, file));
-        } catch (err) {
-          console.error(`Failed to delete scene file ${file}:`, err);
-        }
-      }
-    }
-  }
-  
-  // Save metadata
-  fs.writeFileSync(targetPath, JSON.stringify(metadata, null, 2), 'utf8');
+function sendJson(res, statusCode, payload) {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
 }
 
-// Helper to load a project and merge split scene files
-function loadProjectMerged(id) {
-  const targetPath = path.join(PROJECTS_DIR, id, 'project.json');
-  if (!fs.existsSync(targetPath)) return null;
-  
-  const dataStr = fs.readFileSync(targetPath, 'utf8');
-  const data = JSON.parse(dataStr);
-  
-  // Detect if the metadata contains full scenes directly (legacy project migration)
-  let isLegacy = false;
-  if (data.scenes && typeof data.scenes === 'object') {
-    for (const scene of Object.values(data.scenes)) {
-      if (scene && (Array.isArray(scene.dialogue) || scene.choices || scene.background)) {
-        isLegacy = true;
-        break;
-      }
+function readJsonBody(req, res, callback, maxBytes = 300 * 1024 * 1024) {
+  let body = '';
+  let received = 0;
+  let rejected = false;
+  req.on('data', chunk => {
+    if (rejected) return;
+    received += chunk.length;
+    if (received > maxBytes) {
+      rejected = true;
+      sendJson(res, 413, { success: false, error: 'Request is too large' });
+      req.destroy();
+      return;
     }
-  }
-  
-  if (isLegacy) {
-    console.log(`Auto-migrating legacy project '${id}' into split scenes...`);
-    saveProjectSplit(id, data);
-    // Reload metadata after split save
-    const updatedStr = fs.readFileSync(targetPath, 'utf8');
-    const updatedData = JSON.parse(updatedStr);
-    return loadProjectMergedHelper(id, updatedData);
-  }
-  
-  return loadProjectMergedHelper(id, data);
-}
-
-// Inner helper to perform the scene merging
-function loadProjectMergedHelper(id, data) {
-  const scenesDir = path.join(PROJECTS_DIR, id, 'scenes');
-  data.scenes = data.scenes || {};
-  
-  if (fs.existsSync(scenesDir)) {
-    const files = fs.readdirSync(scenesDir);
-    for (const file of files) {
-      if (file.endsWith('.json')) {
-        try {
-          const sceneDataStr = fs.readFileSync(path.join(scenesDir, file), 'utf8');
-          const sceneData = JSON.parse(sceneDataStr);
-          data.scenes[sceneData.id] = sceneData;
-        } catch (err) {
-          console.error(`Failed to load scene file ${file} for project ${id}:`, err);
-        }
-      }
+    body += chunk;
+  });
+  req.on('end', () => {
+    if (rejected) return;
+    try {
+      callback(JSON.parse(body || '{}'));
+    } catch (err) {
+      sendJson(res, 400, { success: false, error: 'Invalid JSON data', details: err.message });
     }
-  }
-  
-  return data;
-}
-
-// Helper to scan a directory recursively
-function scanDir(dirPath) {
-  if (!fs.existsSync(dirPath)) return [];
-  return fs.readdirSync(dirPath).filter(file => {
-    const stat = fs.statSync(path.join(dirPath, file));
-    return !stat.isDirectory();
   });
 }
 
@@ -322,6 +261,7 @@ const server = http.createServer((req, res) => {
 
   // GET /api/projects - List all projects
   if (pathname === '/api/projects' && req.method === 'GET') {
+    const includeArchived = url.searchParams.get('includeArchived') === '1';
     const dirs = fs.readdirSync(PROJECTS_DIR).filter(name => {
       try {
         return fs.statSync(path.join(PROJECTS_DIR, name)).isDirectory();
@@ -335,10 +275,14 @@ const server = http.createServer((req, res) => {
       if (fs.existsSync(targetFile)) {
         try {
           const data = JSON.parse(fs.readFileSync(targetFile, 'utf8'));
+          const archived = Boolean(data.archivedAt);
+          if (archived && !includeArchived) return;
           projectsList.push({
             id: dir,
             title: data.title || dir,
-            author: data.author || "Unknown"
+            author: data.author || "Unknown",
+            archived,
+            archivedAt: data.archivedAt || null
           });
         } catch (err) {
           // skip malformed json
@@ -352,17 +296,18 @@ const server = http.createServer((req, res) => {
   // GET /api/project - Load a specific project
   if (pathname === '/api/project' && req.method === 'GET') {
     const id = url.searchParams.get('id') || 'demo';
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
     const targetPath = path.join(PROJECTS_DIR, id, 'project.json');
     if (!fs.existsSync(targetPath)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ success: false, error: 'Project not found' }));
     }
     try {
-      const data = loadProjectMerged(id);
+      const data = projectStore.loadProjectMerged(id);
       if (!data) throw new Error('Failed to load project data');
       const modified = migrateProjectAssetPaths(id, data);
       if (modified) {
-        saveProjectSplit(id, data);
+        projectStore.saveProjectSplit(id, data);
         console.log(`Auto-migrated asset paths for project folder: ${id}`);
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -376,14 +321,15 @@ const server = http.createServer((req, res) => {
   // POST /api/project - Save a specific project
   if (pathname === '/api/project' && req.method === 'POST') {
     const id = url.searchParams.get('id') || 'demo';
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', () => {
       try {
         const projectData = JSON.parse(body);
-        saveProjectSplit(id, projectData);
+        const result = projectStore.saveProjectSplit(id, projectData);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Project saved successfully' }));
+        res.end(JSON.stringify({ success: true, message: 'Project saved successfully', savedAt: new Date().toISOString(), snapshotId: result.snapshotId }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'Invalid JSON data', details: err.message }));
@@ -408,22 +354,19 @@ const server = http.createServer((req, res) => {
         
         // Sanitize ID
         id = id.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+        if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Project ID must contain letters or numbers' });
         const projectDir = path.join(PROJECTS_DIR, id);
-        const targetPath = path.join(projectDir, 'project.json');
         
         if (fs.existsSync(projectDir)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'Project directory already exists' }));
         }
         
-        fs.mkdirSync(projectDir, { recursive: true });
-        const projectAssetsDir = path.join(projectDir, 'assets');
-        fs.mkdirSync(projectAssetsDir, { recursive: true });
-        assetTypes.forEach(type => {
-          fs.mkdirSync(path.join(projectAssetsDir, type), { recursive: true });
-        });
-        
         const newProject = {
+          artifactType: 'vnfairy-project',
+          schemaVersion: 1,
+          engineVersion: '2.0.0',
+          createdWithVersion: '2.0.0',
           title: title || "New Visual Novel",
           author: author || "Unknown",
           config: {
@@ -467,9 +410,10 @@ const server = http.createServer((req, res) => {
            }
          };
          
-         fs.writeFileSync(targetPath, JSON.stringify(newProject, null, 2), 'utf8');
+         newProject.id = id;
+         const saved = projectStore.saveProjectSplit(id, newProject);
          res.writeHead(200, { 'Content-Type': 'application/json' });
-         res.end(JSON.stringify({ success: true, id: id, project: newProject }));
+         res.end(JSON.stringify({ success: true, id: id, project: saved.project }));
        } catch (err) {
          res.writeHead(500, { 'Content-Type': 'application/json' });
          res.end(JSON.stringify({ success: false, error: err.message }));
@@ -485,6 +429,7 @@ const server = http.createServer((req, res) => {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ success: false, error: 'Project ID is required' }));
     }
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
     if (id === 'demo') {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ success: false, error: 'Cannot delete the demo project' }));
@@ -492,6 +437,8 @@ const server = http.createServer((req, res) => {
     const projectDir = path.join(PROJECTS_DIR, id);
     if (fs.existsSync(projectDir)) {
       fs.rmSync(projectDir, { recursive: true, force: true });
+      const projectRecoveryDir = path.join(RECOVERY_DIR, id);
+      if (fs.existsSync(projectRecoveryDir)) fs.rmSync(projectRecoveryDir, { recursive: true, force: true });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ success: true, message: 'Project deleted successfully' }));
     } else {
@@ -500,238 +447,233 @@ const server = http.createServer((req, res) => {
     }
   }
 
+  // POST /api/project/duplicate - Clone source data and assets under a new immutable ID
+  if (pathname === '/api/project/duplicate' && req.method === 'POST') {
+    const sourceId = url.searchParams.get('id');
+    if (!isSafeProjectId(sourceId)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
+    return readJsonBody(req, res, payload => {
+      try {
+        const source = projectStore.loadProjectMerged(sourceId);
+        if (!source) return sendJson(res, 404, { success: false, error: 'Project not found' });
+        const newId = projectStore.uniqueProjectId(payload.id || `${sourceId}-copy`);
+        const duplicate = JSON.parse(JSON.stringify(source));
+        duplicate.id = newId;
+        duplicate.title = String(payload.title || `${source.title || sourceId} Copy`).trim();
+        delete duplicate.archivedAt;
+        projectStore.rewriteProjectAssetPaths(duplicate, sourceId, newId);
+        projectStore.saveProjectSplit(newId, duplicate, { assetsSourceDir: path.join(PROJECTS_DIR, sourceId, 'assets') });
+        sendJson(res, 200, { success: true, id: newId, project: duplicate });
+      } catch (err) {
+        sendJson(res, 500, { success: false, error: err.message });
+      }
+    });
+  }
+
+  // POST /api/project/rename - Change the display title without changing the project ID
+  if (pathname === '/api/project/rename' && req.method === 'POST') {
+    const id = url.searchParams.get('id');
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
+    return readJsonBody(req, res, payload => {
+      try {
+        const title = String(payload.title || '').trim();
+        if (!title) return sendJson(res, 400, { success: false, error: 'Story title is required' });
+        const project = projectStore.loadProjectMerged(id);
+        if (!project) return sendJson(res, 404, { success: false, error: 'Project not found' });
+        project.title = title;
+        projectStore.saveProjectSplit(id, project);
+        sendJson(res, 200, { success: true, id, title });
+      } catch (err) {
+        sendJson(res, 500, { success: false, error: err.message });
+      }
+    });
+  }
+
+  // POST /api/project/archive - Hide or restore a project from the active dashboard
+  if (pathname === '/api/project/archive' && req.method === 'POST') {
+    const id = url.searchParams.get('id');
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
+    if (id === 'demo') return sendJson(res, 400, { success: false, error: 'Cannot archive the demo project' });
+    return readJsonBody(req, res, payload => {
+      try {
+        const project = projectStore.loadProjectMerged(id);
+        if (!project) return sendJson(res, 404, { success: false, error: 'Project not found' });
+        if (payload.archived === false) delete project.archivedAt;
+        else project.archivedAt = new Date().toISOString();
+        projectStore.saveProjectSplit(id, project);
+        sendJson(res, 200, { success: true, id, archived: Boolean(project.archivedAt), archivedAt: project.archivedAt || null });
+      } catch (err) {
+        sendJson(res, 500, { success: false, error: err.message });
+      }
+    });
+  }
+
+  // GET /api/project/recovery - List the last successful project versions
+  if (pathname === '/api/project/recovery' && req.method === 'GET') {
+    const id = url.searchParams.get('id');
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
+    try {
+      return sendJson(res, 200, { success: true, snapshots: projectStore.listRecoverySnapshots(id) });
+    } catch (err) {
+      return sendJson(res, 500, { success: false, error: err.message });
+    }
+  }
+
+  // POST /api/project/restore - Validate a snapshot, then commit it like a normal save
+  if (pathname === '/api/project/restore' && req.method === 'POST') {
+    const id = url.searchParams.get('id');
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
+    return readJsonBody(req, res, payload => {
+      try {
+        const snapshotId = String(payload.snapshotId || '');
+        if (!/^\d+-[a-z0-9]+$/.test(snapshotId)) return sendJson(res, 400, { success: false, error: 'Invalid snapshot ID' });
+        const snapshotDir = path.join(RECOVERY_DIR, id, snapshotId);
+        if (!fs.existsSync(snapshotDir)) return sendJson(res, 404, { success: false, error: 'Recovery snapshot not found' });
+        const restoredProject = projectStore.validateSplitProjectDirectory(snapshotDir, id);
+        const result = projectStore.saveProjectSplit(id, restoredProject, { assetsSourceDir: path.join(snapshotDir, 'assets') });
+        sendJson(res, 200, { success: true, project: restoredProject, savedAt: new Date().toISOString(), snapshotId: result.snapshotId });
+      } catch (err) {
+        sendJson(res, 500, { success: false, error: err.message });
+      }
+    });
+  }
+
+  // GET /api/project/export - Source archive; deliberately separate from playable ZIP packaging
+  if (pathname === '/api/project/export' && req.method === 'GET') {
+    const id = url.searchParams.get('id');
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
+    const projectDir = path.join(PROJECTS_DIR, id);
+    if (!fs.existsSync(projectDir)) return sendJson(res, 404, { success: false, error: 'Project not found' });
+    try {
+      projectStore.validateSplitProjectDirectory(projectDir, id);
+      const zip = new AdmZip();
+      zip.addFile('manifest.json', Buffer.from(JSON.stringify({ format: 'vnfairy-source', version: 1, projectId: id, exportedAt: new Date().toISOString() }, null, 2)));
+      zip.addLocalFolder(projectDir, 'project');
+      const buffer = zip.toBuffer();
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.vnfairy.project+zip',
+        'Content-Disposition': `attachment; filename="${id}.vnfairy"`,
+        'Content-Length': buffer.length
+      });
+      return res.end(buffer);
+    } catch (err) {
+      return sendJson(res, 500, { success: false, error: err.message });
+    }
+  }
+
+  // POST /api/project/import - Import a validated VNFairy source archive
+  if (pathname === '/api/project/import' && req.method === 'POST') {
+    return readJsonBody(req, res, payload => {
+      let importDir = null;
+      try {
+        if (!payload.data) return sendJson(res, 400, { success: false, error: 'Archive data is required' });
+        const zip = new AdmZip(Buffer.from(payload.data, 'base64'));
+        const manifestEntry = zip.getEntry('manifest.json');
+        if (!manifestEntry) return sendJson(res, 400, { success: false, error: 'Not a VNFairy source project' });
+        const manifest = JSON.parse(manifestEntry.getData().toString('utf8'));
+        if (manifest.format !== 'vnfairy-source' || manifest.version !== 1) {
+          return sendJson(res, 400, { success: false, error: 'Unsupported VNFairy source format' });
+        }
+
+        const originalId = projectStore.normalizeProjectId(manifest.projectId || 'imported-project');
+        const newId = projectStore.uniqueProjectId(payload.id || originalId);
+        importDir = path.join(PROJECTS_DIR, `.${newId}.import-${Date.now()}`);
+        fs.mkdirSync(importDir, { recursive: true });
+        const importRoot = path.resolve(importDir) + path.sep;
+        let declaredArchiveBytes = 0;
+        for (const entry of zip.getEntries()) {
+          const entryName = entry.entryName.replace(/\\/g, '/');
+          if (!entryName.startsWith('project/')) continue;
+          const relativeName = entryName.slice('project/'.length);
+          const parts = relativeName.split('/').filter(Boolean);
+          if (!parts.length) continue;
+          declaredArchiveBytes += Number(entry.header && entry.header.size || 0);
+          if (declaredArchiveBytes > 500 * 1024 * 1024) throw new Error('Source archive expands beyond the 500 MB import limit');
+          const destination = path.resolve(importDir, ...parts);
+          if (!destination.startsWith(importRoot)) throw new Error('Source archive contains an unsafe path');
+          if (entry.isDirectory) fs.mkdirSync(destination, { recursive: true });
+          else {
+            fs.mkdirSync(path.dirname(destination), { recursive: true });
+            fs.writeFileSync(destination, entry.getData());
+          }
+        }
+
+        const imported = projectStore.validateSplitProjectDirectory(importDir, originalId);
+        imported.id = newId;
+        if (payload.title) imported.title = String(payload.title).trim() || imported.title;
+        projectStore.rewriteProjectAssetPaths(imported, originalId, newId);
+        projectStore.saveProjectSplit(newId, imported, { assetsSourceDir: path.join(importDir, 'assets') });
+        sendJson(res, 200, { success: true, id: newId, title: imported.title });
+      } catch (err) {
+        sendJson(res, 400, { success: false, error: err.message });
+      } finally {
+        if (importDir && fs.existsSync(importDir)) fs.rmSync(importDir, { recursive: true, force: true });
+      }
+    });
+  }
+
   // GET /api/assets - Scan assets
   if (pathname === '/api/assets' && req.method === 'GET') {
     const project = url.searchParams.get('project') || 'demo';
-    const projectAssetsDir = path.join(PROJECTS_DIR, project, 'assets');
-    
-    // Ensure directories exist
-    if (!fs.existsSync(projectAssetsDir)) fs.mkdirSync(projectAssetsDir, { recursive: true });
-    
-    const assets = {};
-    assetTypes.forEach(type => {
-      const typePath = path.join(projectAssetsDir, type);
-      if (!fs.existsSync(typePath)) fs.mkdirSync(typePath, { recursive: true });
-      assets[type] = scanDir(typePath);
-    });
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify(assets));
+    if (!isSafeProjectId(project)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
+    return sendJson(res, 200, assetService.listAssets(project, projectStore.loadProjectMerged(project)));
   }
 
   // POST /api/upload - Handle file upload via base64 json
   if (pathname === '/api/upload' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    return readJsonBody(req, res, payload => {
       try {
-        const payload = JSON.parse(body);
-        const { filename, type, data, project } = payload; // data is base64 string
-        
-        if (!filename || !type || !data) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'Missing parameters' }));
-        }
-
-        if (!assetTypes.includes(type)) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'Invalid asset type' }));
-        }
-
-        // Strip data prefix if present (e.g., "data:image/png;base64,")
-        const base64Data = data.replace(/^data:[^;]+;base64,/, "");
-        const buffer = Buffer.from(base64Data, 'base64');
-        
+        const { filename, type, data, project } = payload;
+        if (!filename || !type || !data) return sendJson(res, 400, { success: false, error: 'Missing parameters' });
+        if (!assetTypes.includes(type)) return sendJson(res, 400, { success: false, error: 'Invalid asset type' });
         const targetProj = project || 'demo';
-        const projectDir = path.join(PROJECTS_DIR, targetProj);
-        const projectAssetsDir = path.join(projectDir, 'assets');
-        const targetDir = path.join(projectAssetsDir, type);
-        
-        if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir, { recursive: true });
-        if (!fs.existsSync(projectAssetsDir)) fs.mkdirSync(projectAssetsDir, { recursive: true });
-        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-        
-        const returnPath = `data/projects/${targetProj}/assets/${type}/${filename}`;
-        
-        const targetPath = path.join(targetDir, filename);
-        fs.writeFileSync(targetPath, buffer);
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ 
-          success: true, 
-          message: 'File uploaded successfully', 
-          path: returnPath 
-        }));
+        if (!isSafeProjectId(targetProj)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
+        const result = assetService.upload({ filename, type, data, project: targetProj });
+        return sendJson(res, 200, { success: true, message: 'File uploaded successfully', ...result });
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        const status = err.code === 'ASSET_TOO_LARGE' ? 413 : err.code && err.code.startsWith('ASSET_') ? 400 : 500;
+        return sendJson(res, status, { success: false, error: err.message, code: err.code });
       }
-    });
-    return;
+    }, 360 * 1024 * 1024);
   }
 
   // POST /api/asset/delete - Delete a specific asset file from project directory
   if (pathname === '/api/asset/delete' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', () => {
+    return readJsonBody(req, res, payload => {
       try {
-        const payload = JSON.parse(body);
         const { type, filename, project } = payload;
-        
-        if (!type || !filename || !project) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'Missing parameters' }));
-        }
-
-        if (!assetTypes.includes(type)) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'Invalid asset type' }));
-        }
-
-        const projectDir = path.join(PROJECTS_DIR, project);
-        const targetPath = path.join(projectDir, 'assets', type, filename);
-
-        if (fs.existsSync(targetPath)) {
-          fs.unlinkSync(targetPath);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, message: 'Asset file deleted successfully' }));
-        } else {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'File not found on disk' }));
-        }
+        if (!type || !filename || !project) return sendJson(res, 400, { success: false, error: 'Missing parameters' });
+        if (!assetTypes.includes(type) || !isSafeProjectId(project)) return sendJson(res, 400, { success: false, error: 'Invalid project or asset type' });
+        if (assetService.remove({ filename, type, project })) return sendJson(res, 200, { success: true, message: 'Asset file deleted successfully' });
+        return sendJson(res, 404, { success: false, error: 'File not found on disk' });
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        const status = err.code && err.code.startsWith('ASSET_') ? 400 : 500;
+        return sendJson(res, status, { success: false, error: err.message, code: err.code });
       }
     });
-    return;
+  }
+
+  // GET /api/package/check - Inspect package size before creating a ZIP
+  if (pathname === '/api/package/check' && req.method === 'GET') {
+    const id = url.searchParams.get('id') || 'demo';
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
+    try {
+      return sendJson(res, 200, { success: true, ...packageService.inspectPackageAssets(id) });
+    } catch (error) {
+      return sendJson(res, 500, { success: false, error: error.message });
+    }
   }
 
   // POST /api/package - Zip the visual novel using powershell Compress-Archive
   if (pathname === '/api/package' && req.method === 'POST') {
     const id = url.searchParams.get('id') || 'demo';
-    const projectPath = path.join(PROJECTS_DIR, id, 'project.json');
-    
-    if (!fs.existsSync(projectPath)) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: false, error: 'Project file not found to package' }));
-    }
-    
-    const tempDir = path.join(PUBLIC_DIR, `temp_pkg_${id}_${Date.now()}`);
-    const zipPath = path.join(PUBLIC_DIR, `${id}_game.zip`);
-
+    if (!isSafeProjectId(id)) return sendJson(res, 400, { success: false, error: 'Invalid project ID' });
     try {
-      // Create staged structure
-      fs.mkdirSync(tempDir, { recursive: true });
-      fs.mkdirSync(path.join(tempDir, 'css'), { recursive: true });
-      fs.mkdirSync(path.join(tempDir, 'js'), { recursive: true });
-      
-      const tempDataDir = path.join(tempDir, 'data');
-      fs.mkdirSync(tempDataDir, { recursive: true });
-      
-      const tempProjDir = path.join(tempDataDir, 'projects', id);
-      fs.mkdirSync(tempProjDir, { recursive: true });
-
-      // Copy required files
-      fs.copyFileSync(path.join(PUBLIC_DIR, 'index.html'), path.join(tempDir, 'index.html'));
-      
-      // Copy only required CSS files
-      fs.copyFileSync(path.join(PUBLIC_DIR, 'css', 'common.css'), path.join(tempDir, 'css', 'common.css'));
-      fs.copyFileSync(path.join(PUBLIC_DIR, 'css', 'engine.css'), path.join(tempDir, 'css', 'engine.css'));
-      
-      // Copy only required JS file
-      fs.copyFileSync(path.join(PUBLIC_DIR, 'js', 'engine.js'), path.join(tempDir, 'js', 'engine.js'));
-
-      // Copy OFL license file
-      if (fs.existsSync(path.join(PUBLIC_DIR, 'OFL.txt'))) {
-        fs.copyFileSync(path.join(PUBLIC_DIR, 'OFL.txt'), path.join(tempDir, 'OFL.txt'));
-      }
-
-      // Load and compile the merged project data
-      const mergedProject = loadProjectMerged(id);
-      if (!mergedProject) throw new Error('Failed to load project data for packaging');
-
-      // Create split metadata
-      const splitMetadata = { ...mergedProject };
-      splitMetadata.id = id;
-      splitMetadata.scenes = {};
-      for (const [sceneId, scene] of Object.entries(mergedProject.scenes || {})) {
-        splitMetadata.scenes[sceneId] = { id: scene.id, title: scene.title };
-      }
-      const splitMetadataStr = JSON.stringify(splitMetadata, null, 2);
-
-      // Write split project.json at data/project.json
-      fs.writeFileSync(path.join(tempDataDir, 'project.json'), splitMetadataStr, 'utf8');
-
-      // Write split project.json at data/projects/{id}/project.json
-      fs.writeFileSync(path.join(tempProjDir, 'project.json'), splitMetadataStr, 'utf8');
-
-      // Copy all split scene files to data/projects/{id}/scenes/
-      const tempProjScenesDir = path.join(tempProjDir, 'scenes');
-      fs.mkdirSync(tempProjScenesDir, { recursive: true });
-      for (const [sceneId, scene] of Object.entries(mergedProject.scenes || {})) {
-        // Write the .json file
-        fs.writeFileSync(path.join(tempProjScenesDir, `${sceneId}.json`), JSON.stringify(scene, null, 2), 'utf8');
-        // Write the .js file to act as wrapper/CORS bypass for offline local plays
-        const sceneJsContent = `window.vnFairyScenes = window.vnFairyScenes || {};\nwindow.vnFairyScenes['${sceneId}'] = ${JSON.stringify(scene, null, 2)};`;
-        fs.writeFileSync(path.join(tempProjScenesDir, `${sceneId}.js`), sceneJsContent, 'utf8');
-      }
-
-      // Generate project.js using the split metadata
-      const projectJsContent = `window.vnFairyProject = ${splitMetadataStr};`;
-      fs.writeFileSync(path.join(tempDataDir, 'project.js'), projectJsContent, 'utf8');
-
-      // Copy project assets folder recursively if it exists
-      const srcAssetsDir = path.join(PROJECTS_DIR, id, 'assets');
-      if (fs.existsSync(srcAssetsDir)) {
-        fs.cpSync(srcAssetsDir, path.join(tempProjDir, 'assets'), { recursive: true });
-      }
-    } catch (e) {
-      // Cleanup on failure
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch (rmErr) {}
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: false, error: 'Failed to stage project files for packaging', details: e.message }));
+      const result = packageService.packageProject(id);
+      return sendJson(res, 200, { success: true, message: 'Game packaged successfully', downloadUrl: result.downloadUrl });
+    } catch (error) {
+      return sendJson(res, 500, { success: false, error: 'Failed to package project archive', details: error.message });
     }
 
-    // Clean old zip if exists
-    if (fs.existsSync(zipPath)) {
-      try { fs.unlinkSync(zipPath); } catch(e) {}
-    }
-
-    try {
-      const zip = new AdmZip();
-      
-      // Add staged files and directories
-      zip.addLocalFile(path.join(tempDir, 'index.html'));
-      zip.addLocalFolder(path.join(tempDir, 'css'), 'css');
-      zip.addLocalFolder(path.join(tempDir, 'js'), 'js');
-      zip.addLocalFolder(path.join(tempDir, 'data'), 'data');
-      if (fs.existsSync(path.join(tempDir, 'OFL.txt'))) {
-        zip.addLocalFile(path.join(tempDir, 'OFL.txt'));
-      }
-      
-      // Write zip file
-      zip.writeZip(zipPath);
-      
-      // Cleanup temp project files
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch (e) {}
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, message: 'Game packaged successfully', downloadUrl: `/${id}_game.zip` }));
-    } catch (err) {
-      // Cleanup temp project files on error
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch (e) {}
-
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Failed to package project archive', details: err.message }));
-    }
-    return;
   }
 
   // --- STATIC FILE SERVING ---

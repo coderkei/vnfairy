@@ -24,6 +24,10 @@ along with this program. If not, see https://www.gnu.org/licenses/
     if (localStorage.getItem('vnfairy-editor-theme') === 'light') {
       document.documentElement.classList.add('light-mode');
     }
+    const savedPalette = localStorage.getItem('vnfairy-editor-palette');
+    if (savedPalette) {
+      document.documentElement.dataset.accentPalette = savedPalette;
+    }
   </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -41,24 +45,43 @@ along with this program. If not, see https://www.gnu.org/licenses/
     <!-- Top Navigation Bar -->
     <header class="editor-header glass-panel">
       <div class="header-logo">
-        <span class="logo-emoji">🧚‍♀️</span>
-        <h1>VNFairy Designer</h1>
+        <span class="logo-emoji" aria-hidden="true">VF</span>
+        <div class="header-brand-copy">
+          <h1>VNFairy</h1>
+          <span>Story Studio</span>
+        </div>
       </div>
       
       <div class="project-info-inputs">
+        <span class="project-context-label">Current project</span>
         <input type="text" id="project-title-input" class="input-text project-meta-input" placeholder="Project Title" value="My Visual Novel">
         <span class="meta-separator">by</span>
         <input type="text" id="project-author-input" class="input-text project-meta-input" placeholder="Author Name" value="Author">
       </div>
 
       <div class="header-actions">
-        <span id="save-status" class="save-status-msg">All changes saved</span>
-        <button class="btn-secondary" id="btn-toggle-theme" title="Toggle Theme" style="padding: 10px; font-size: 1.1rem; line-height: 1; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px;">🌙</button>
-        <button class="btn-secondary" id="btn-open-guide" title="User Guide" style="padding: 10px; font-size: 1.1rem; line-height: 1; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px;">📖</button>
-        <button class="btn-secondary" id="btn-back-dashboard" title="Back to Projects Dashboard">📂 Projects</button>
-        <button class="btn-secondary" id="btn-save-project">Save Project</button>
-        <button class="btn-secondary" id="btn-test-play">Test Play</button>
-        <button class="btn-primary" id="btn-package-game">Package Game</button>
+        <span id="save-status" class="save-status-msg">Saved to disk</span>
+        <button class="btn-secondary header-icon-action" id="btn-toggle-theme" title="Toggle light or dark mode">Theme</button>
+        <div class="palette-picker">
+          <button class="btn-secondary header-icon-action" id="btn-palette-picker" title="Choose accent colour" aria-haspopup="true" aria-expanded="false">Accent</button>
+          <div class="palette-menu hidden" id="palette-menu" role="menu" aria-label="Editor palette">
+            <div class="palette-menu-label">Editor palette</div>
+            <button class="palette-option" type="button" data-palette="sage" role="menuitem"><span class="palette-swatch sage"></span><span>Sage</span></button>
+            <button class="palette-option" type="button" data-palette="slate" role="menuitem"><span class="palette-swatch slate"></span><span>Slate</span></button>
+            <button class="palette-option" type="button" data-palette="umber" role="menuitem"><span class="palette-swatch umber"></span><span>Umber</span></button>
+            <button class="palette-option" type="button" data-palette="plum" role="menuitem"><span class="palette-swatch plum"></span><span>Plum</span></button>
+          </div>
+        </div>
+        <button class="btn-secondary header-icon-action" id="btn-open-guide" title="Open the user guide">Help</button>
+        <span class="header-divider" aria-hidden="true"></span>
+        <button class="btn-secondary" id="btn-back-dashboard" title="Back to projects">Projects</button>
+        <button class="btn-secondary" id="btn-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
+        <button class="btn-secondary" id="btn-redo" title="Redo (Ctrl+Y)" disabled>Redo</button>
+        <button class="btn-secondary" id="btn-save-project">Save</button>
+        <button class="btn-secondary" id="btn-restore-project">Restore</button>
+        <button class="btn-secondary" id="btn-export-source">Export source</button>
+        <button class="btn-secondary" id="btn-test-play">Preview</button>
+        <button class="btn-primary" id="btn-package-game">Export game</button>
       </div>
     </header>
 
@@ -75,15 +98,16 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
       <!-- Scenes Tab Contents -->
       <div class="sidebar-content" id="scenes-tab">
-        <div class="section-header">
+        <div class="section-header sidebar-section-heading">
           <h3>Story Scenes</h3>
-          <div style="display:flex; gap:6px;">
-            <button class="btn-icon" id="btn-add-scene-group" title="Add Scene Group" style="font-size:0.85rem; width:34px; white-space:nowrap;">📁&#43;</button>
-            <button class="btn-icon" id="btn-add-scene" title="Add Scene">&#43;</button>
+          <div class="sidebar-section-actions" aria-label="Scene actions">
+            <button class="btn-icon btn-icon-wide" id="btn-open-scene-management-sidebar" title="Open scene management">Manage</button>
+            <button class="btn-icon btn-icon-wide" id="btn-add-scene-group" title="Add scene group">Group</button>
+            <button class="btn-icon btn-icon-wide" id="btn-add-scene" title="Add scene">+ Scene</button>
           </div>
         </div>
         <div class="search-bar-container" style="padding: 4px 12px 12px 12px;">
-          <input type="text" id="scene-search-input" class="input-text" placeholder="🔍 Search scenes..." style="padding: 6px 10px; font-size: 0.85rem;">
+          <input type="text" id="scene-search-input" class="input-text" placeholder="Search scenes" style="padding: 6px 10px; font-size: 0.85rem;">
         </div>
         <div class="scenes-list" id="sidebar-scenes-list">
           <!-- Scenes list injected here -->
@@ -92,81 +116,35 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
       <!-- Assets Tab Contents -->
       <div class="sidebar-content hidden" id="assets-tab">
-        <!-- Backgrounds Section -->
-        <div class="asset-section">
-          <div class="section-header">
-            <h4>Backgrounds</h4>
-            <button class="btn-icon" onclick="triggerAssetUpload('bg')" title="Upload Background">&#43;</button>
+        <div class="asset-sidebar-header">
+          <div>
+            <h3>Assets</h3>
+            <div class="sidebar-launch-stats" id="asset-sidebar-summary">0 assets</div>
           </div>
-          <div class="search-bar-container" style="padding: 4px 0 8px 0;">
-            <input type="text" id="search-asset-bg" class="input-text" placeholder="🔍 Search backgrounds..." style="padding: 4px 8px; font-size: 0.8rem;">
-          </div>
-          <div class="asset-grid mini-scrollbar" id="asset-bg-list">
-            <!-- Background cards -->
-          </div>
+          <button type="button" class="btn-icon btn-icon-wide" id="btn-open-asset-management">Manage</button>
         </div>
-
-        <!-- Characters Section -->
-        <div class="asset-section">
-          <div class="section-header">
-            <h4>Characters</h4>
-            <div style="display:flex; gap:6px;">
-              <button class="btn-icon" onclick="triggerAssetUpload('char')" title="Upload Sprite Art">&#128196;</button>
-              <button class="btn-icon" id="btn-add-character" title="Add Character">&#43;</button>
-            </div>
-          </div>
-          <div class="search-bar-container" style="padding: 4px 0 8px 0;">
-            <input type="text" id="search-asset-char" class="input-text" placeholder="🔍 Search characters..." style="padding: 4px 8px; font-size: 0.8rem;">
-          </div>
-          <div class="character-assets-list" id="asset-char-list">
-            <!-- Characters list with expression sprites -->
-          </div>
+        <div class="asset-sidebar-categories" aria-label="Asset categories">
+          <details class="asset-sidebar-section" data-sidebar-asset-type="bg" open>
+            <summary><span>Backgrounds</span><span class="asset-section-count" id="asset-sidebar-count-bg">0</span></summary>
+            <div class="asset-sidebar-section-body"><div class="asset-sidebar-preview" id="asset-sidebar-bg"></div><button type="button" class="asset-sidebar-view-all" data-asset-panel="asset-panel-bg">View all backgrounds</button></div>
+          </details>
+          <details class="asset-sidebar-section" data-sidebar-asset-type="char">
+            <summary><span>Characters</span><span class="asset-section-count" id="asset-sidebar-count-char">0</span></summary>
+            <div class="asset-sidebar-section-body"><div class="asset-sidebar-preview" id="asset-sidebar-char"></div><button type="button" class="asset-sidebar-view-all" data-asset-panel="asset-panel-char">View all characters</button></div>
+          </details>
+          <details class="asset-sidebar-section" data-sidebar-asset-type="music">
+            <summary><span>Music</span><span class="asset-section-count" id="asset-sidebar-count-music">0</span></summary>
+            <div class="asset-sidebar-section-body"><div class="asset-sidebar-preview" id="asset-sidebar-music"></div><button type="button" class="asset-sidebar-view-all" data-asset-panel="asset-panel-music">View all music</button></div>
+          </details>
+          <details class="asset-sidebar-section" data-sidebar-asset-type="sound">
+            <summary><span>Voice &amp; sound</span><span class="asset-section-count" id="asset-sidebar-count-sound">0</span></summary>
+            <div class="asset-sidebar-section-body"><div class="asset-sidebar-preview" id="asset-sidebar-sound"></div><button type="button" class="asset-sidebar-view-all" data-asset-panel="asset-panel-sound">View all sound</button></div>
+          </details>
+          <details class="asset-sidebar-section" data-sidebar-asset-type="video">
+            <summary><span>Videos</span><span class="asset-section-count" id="asset-sidebar-count-video">0</span></summary>
+            <div class="asset-sidebar-section-body"><div class="asset-sidebar-preview" id="asset-sidebar-video"></div><button type="button" class="asset-sidebar-view-all" data-asset-panel="asset-panel-video">View all videos</button></div>
+          </details>
         </div>
-
-        <!-- Music Section -->
-        <div class="asset-section">
-          <div class="section-header">
-            <h4>Music BGM</h4>
-            <button class="btn-icon" onclick="triggerAssetUpload('music')" title="Upload Music">&#43;</button>
-          </div>
-          <div class="search-bar-container" style="padding: 4px 0 8px 0;">
-            <input type="text" id="search-asset-music" class="input-text" placeholder="🔍 Search music..." style="padding: 4px 8px; font-size: 0.8rem;">
-          </div>
-          <div class="audio-assets-list" id="asset-music-list">
-            <!-- Music list -->
-          </div>
-        </div>
-
-        <!-- Voice Clips Section -->
-        <div class="asset-section">
-          <div class="section-header">
-            <h4>Voice Clips (Sound)</h4>
-            <button class="btn-icon" onclick="triggerAssetUpload('sound')" title="Upload Voice Clip">&#43;</button>
-          </div>
-          <div class="search-bar-container" style="padding: 4px 0 8px 0;">
-            <input type="text" id="search-asset-sound" class="input-text" placeholder="🔍 Search voice clips..." style="padding: 4px 8px; font-size: 0.8rem;">
-          </div>
-          <div class="audio-assets-list" id="asset-sound-list">
-            <!-- Voice list -->
-          </div>
-        </div>
-
-        <!-- Videos Section -->
-        <div class="asset-section">
-          <div class="section-header">
-            <h4>Videos (Cutscenes)</h4>
-            <button class="btn-icon" onclick="triggerAssetUpload('video')" title="Upload Video">&#43;</button>
-          </div>
-          <div class="search-bar-container" style="padding: 4px 0 8px 0;">
-            <input type="text" id="search-asset-video" class="input-text" placeholder="🔍 Search videos..." style="padding: 4px 8px; font-size: 0.8rem;">
-          </div>
-          <div class="audio-assets-list" id="asset-video-list">
-            <!-- Video list -->
-          </div>
-        </div>
-
-        <!-- Hidden input for file uploads -->
-        <input type="file" id="asset-file-uploader" class="hidden">
       </div>
     </aside>
 
@@ -174,10 +152,10 @@ along with this program. If not, see https://www.gnu.org/licenses/
     <section class="center-panel glass-panel">
       <!-- Main Workspace View Tabs -->
       <div class="center-tabs">
-        <button class="tab-btn active" onclick="switchWorkspaceView('timeline-view')">Dialogue Timeline</button>
-        <button class="tab-btn" onclick="switchWorkspaceView('flowchart-view')">Flowchart Map</button>
+        <button class="tab-btn active" onclick="switchWorkspaceView('timeline-view')">Dialogue</button>
+        <button class="tab-btn" onclick="switchWorkspaceView('flowchart-view')">Story map</button>
         <button class="tab-btn" onclick="switchWorkspaceView('unlockables-view')">Unlockables</button>
-        <button class="tab-btn" onclick="switchWorkspaceView('settings-view')">Novel Settings</button>
+        <button class="tab-btn" onclick="switchWorkspaceView('settings-view')">Settings</button>
       </div>
 
       <!-- Dialogue Timeline Editor View -->
@@ -187,161 +165,81 @@ along with this program. If not, see https://www.gnu.org/licenses/
         </div>
 
         <div id="active-scene-editor" class="scene-editor-container hidden">
-          <!-- Scene configuration headers -->
-          <div class="scene-meta-editor glass-panel" style="padding: 12px 20px; margin-bottom: 8px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; user-select:none;" onclick="toggleSceneMeta()">
-              <h4 style="margin:0; font-size:0.95rem; font-family:var(--font-display); font-weight:600; display:flex; align-items:center; gap:8px;">
-                ⚙️ Scene Settings
-                <span id="scene-meta-toggle-status" style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">(collapsed)</span>
-              </h4>
-              <span id="scene-meta-toggle-arrow" style="font-size:0.8rem; color:var(--text-muted);">▼</span>
-            </div>
-            <div class="scene-meta-grid hidden" id="scene-meta-grid" style="margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 12px;">
-              <!-- Column 1: Scene Basics -->
-              <div class="scene-meta-col">
-                <label class="col-header-label">Scene Basics</label>
-                <div class="input-group">
-                  <label>Scene ID</label>
-                  <input type="text" id="scene-id-input" class="input-text" readonly>
-                </div>
-                <div class="input-group">
-                  <label>Display Name</label>
-                  <input type="text" id="scene-name-input" class="input-text" placeholder="e.g. Entering Forest">
-                </div>
-                <div class="input-group">
-                  <label>Scene Group</label>
-                  <select id="scene-group-select" class="select-input">
-                    <option value="">No Group</option>
-                  </select>
-                </div>
-                <div class="input-group">
-                  <label>Scene Mode</label>
-                  <select id="scene-mode-select" class="select-input">
-                    <option value="normal">Normal Dialogue</option>
-                    <option value="video">Video Cutscene</option>
-                    <option value="text">Fullscreen Text Cutscene</option>
-                    <option value="autotext">Auto Text Cutscene</option>
-                    <option value="image">Image Cutscene</option>
-                  </select>
-                </div>
-              </div>
-
-              <!-- Column 2: Media & Aesthetics -->
-              <div class="scene-meta-col">
-                <label class="col-header-label">Media & Aesthetics</label>
-                <div class="input-group" id="scene-bg-group">
-                  <label>Scene Background</label>
-                  <select id="scene-bg-select" class="select-input" data-asset-type="bg">
-                    <option value="">No Background (Transparent/Dark)</option>
-                  </select>
-                </div>
-                <div class="input-group" id="scene-music-group">
-                  <label>Scene Music</label>
-                  <select id="scene-music-select" class="select-input" data-asset-type="music">
-                    <option value="">Continue Current BGM</option>
-                    <option value="stop">Stop Music</option>
-                  </select>
-                </div>
-                <div class="input-group" id="scene-font-group">
-                  <label>Dialogue Font</label>
-                  <select id="scene-font-select" class="select-input" style="font-weight: 500;">
-                    <option value="Arial, Helvetica, sans-serif" style="font-family: Arial, Helvetica, sans-serif;">Arial (Sans-Serif)</option>
-                    <option value="Georgia, serif" style="font-family: Georgia, serif;">Georgia (Serif)</option>
-                    <option value="Verdana, Geneva, sans-serif" style="font-family: Verdana, Geneva, sans-serif;">Verdana (Sans-Serif)</option>
-                    <option value="Caveat, 'Segoe Print', 'Bradley Hand', cursive" style="font-family: Caveat, 'Segoe Print', 'Bradley Hand', cursive;">Caveat (Handwriting)</option>
-                    <option value="Consolas, 'Courier New', monospace" style="font-family: Consolas, 'Courier New', monospace;">Consolas / Courier (Monospace)</option>
-                  </select>
-                </div>
-                <div class="input-group hidden" id="scene-video-group">
-                  <label>Cutscene Video</label>
-                  <select id="scene-video-select" class="select-input" data-asset-type="video">
-                    <option value="">Select Video...</option>
-                  </select>
-                </div>
-                <div class="input-group hidden" id="scene-text-color-group">
-                  <label>Text Color</label>
-                  <input type="color" id="scene-text-color" value="#ffffff" class="select-input" style="padding:2px; height:38px; cursor:pointer;">
-                </div>
-              </div>
-
-              <!-- Column 3: Scene Options -->
-              <div class="scene-meta-col">
-                <label class="col-header-label">Scene Options</label>
-                <div class="checkbox-field">
-                  <label class="checkbox-container">
-                    <input type="checkbox" id="scene-is-ending">
-                    <span class="checkmark"></span>
-                    <span class="label-text">Is Route Ending Scene</span>
-                  </label>
-                </div>
-                <div class="checkbox-field hidden" id="scene-slide-down-group">
-                  <label class="checkbox-container">
-                    <input type="checkbox" id="scene-slide-down">
-                    <span class="checkmark"></span>
-                    <span class="label-text">Slide Down Text Animation</span>
-                  </label>
-                </div>
-                <div class="input-group hidden" id="scene-char-transition-group" style="margin-top: 10px; margin-bottom: 10px;">
-                  <label>Character Transition</label>
-                  <select id="scene-char-transition" class="select-input">
-                    <option value="fade">Fade (In-Place)</option>
-                    <option value="slide">Slide (Horizontal)</option>
-                    <option value="off">Off (Instant)</option>
-                  </select>
-                </div>
-                <div class="checkbox-field hidden" id="scene-image-autoprogress-group" style="margin-top: 10px;">
-                  <label class="checkbox-container">
-                    <input type="checkbox" id="scene-image-autoprogress">
-                    <span class="checkmark"></span>
-                    <span class="label-text">Auto Progress Scene</span>
-                  </label>
-                </div>
-                <div class="input-group hidden" id="scene-image-autoprogress-duration-group" style="margin-bottom: 10px;">
-                  <label>Display Duration (seconds)</label>
-                  <input type="number" id="scene-image-autoprogress-duration" class="input-text" min="1" step="0.5" placeholder="e.g. 3">
-                </div>
-                <div class="input-group hidden" id="ending-name-group" style="margin-top: -6px; margin-bottom: 10px;">
-                  <label>Ending Route Name</label>
-                  <input type="text" id="scene-ending-name" class="input-text" placeholder="e.g. Ending Name" style="margin-bottom: 8px;">
-                  <label>Ending Sound Effect (Optional)</label>
-                  <select id="scene-ending-sfx" class="select-input">
-                    <option value="">No Sound Effect</option>
-                    <option value="synth_ending">Retro Synthesized Chime</option>
-                  </select>
-                </div>
-                <div class="input-group" id="scene-transition-style-group" style="margin-top: 10px; margin-bottom: 10px;">
-                  <label>Scene Transition</label>
-                  <select id="scene-transition-style" class="select-input">
-                    <option value="off">Off (Instant)</option>
-                    <option value="fade">Fade In/Out (Black)</option>
-                    <option value="next">Fade to Next Scene</option>
-                  </select>
-                </div>
-                <div class="checkbox-field">
-                  <label class="checkbox-container">
-                    <input type="checkbox" id="scene-no-dim-characters">
-                    <span class="checkmark"></span>
-                    <span class="label-text">Disable Character Dimming</span>
-                  </label>
-                </div>
-                <div class="checkbox-field hidden" id="scene-hide-menu-group">
-                  <label class="checkbox-container">
-                    <input type="checkbox" id="scene-hide-quick-menu">
-                    <span class="checkmark"></span>
-                    <span class="label-text">Hide Game Menu</span>
-                  </label>
-                </div>
-              </div>
+          <div class="scene-context-bar glass-panel">
+            <div><span class="panel-eyebrow">Selected scene</span><strong id="scene-context-name">Scene settings</strong></div>
+            <div class="scene-context-actions">
+              <button type="button" class="btn-secondary" id="btn-open-scene-management">Manage scenes</button>
+              <button type="button" class="btn-primary" id="btn-open-scene-settings">Scene settings</button>
             </div>
           </div>
 
           <!-- Dialogue list container -->
+          <div class="writing-workbench glass-panel" id="writing-workbench">
+            <div class="writing-workbench-header">
+              <h3>Dialogue</h3>
+              <div class="writing-view-tabs" role="tablist" aria-label="Dialogue editing view">
+                <button type="button" class="writing-view-tab active" id="btn-dialogue-cards-view" role="tab" aria-selected="true">Cards</button>
+                <button type="button" class="writing-view-tab" id="btn-dialogue-script-view" role="tab" aria-selected="false">Script <span class="shortcut-hint">Alt+S</span></button>
+              </div>
+            </div>
+            <div class="writing-toolbar">
+              <div class="writing-toolbar-actions">
+                <button type="button" class="btn-secondary" id="btn-story-search">Search &amp; replace</button>
+                <button type="button" class="btn-secondary" id="btn-writing-presets">Presets</button>
+                <button type="button" class="btn-secondary" id="btn-duplicate-scene">Duplicate scene</button>
+              </div>
+              <div class="keyboard-help"><span>Enter</span> next line <span>Tab</span> next field <span>Alt+1</span> narrator</div>
+            </div>
+            <div class="story-search-panel hidden" id="story-search-panel">
+              <div class="story-search-fields">
+                <input type="search" id="story-search-input" class="input-text" placeholder="Find across the story..." aria-label="Find across the story">
+                <input type="text" id="story-replace-input" class="input-text" placeholder="Replace with..." aria-label="Replace with">
+                <label class="checkbox-container compact-checkbox"><input type="checkbox" id="story-search-case-sensitive"><span class="checkmark"></span><span class="label-text">Match case</span></label>
+                <button type="button" class="btn-primary" id="btn-story-replace-all">Replace all</button>
+              </div>
+              <div class="story-search-results" id="story-search-results"><span class="muted">Search the whole story by dialogue text or scene notes.</span></div>
+            </div>
+            <div class="preset-panel hidden" id="preset-panel">
+              <div class="preset-panel-header"><strong>Reusable presets</strong><span class="muted">Save a scene foundation, dialogue layout, or character placement for the next pass.</span></div>
+              <div class="preset-grid">
+                <div class="preset-card">
+                  <label for="scene-preset-select">Scene</label>
+                  <div class="preset-row"><select id="scene-preset-select" class="select-input"><option value="">Choose scene preset...</option></select><button type="button" class="btn-secondary" id="btn-save-scene-preset">Save</button><button type="button" class="btn-secondary" id="btn-apply-scene-preset">Apply</button></div>
+                </div>
+                <div class="preset-card">
+                  <label for="dialogue-layout-preset-select">Dialogue layout</label>
+                  <div class="preset-row"><select id="dialogue-layout-preset-select" class="select-input"><option value="">Choose dialogue preset...</option></select><button type="button" class="btn-secondary" id="btn-save-dialogue-layout-preset">Save</button><button type="button" class="btn-secondary" id="btn-apply-dialogue-layout-preset">Apply</button></div>
+                </div>
+                <div class="preset-card">
+                  <label for="character-placement-preset-select">Reusable pose set</label>
+                  <div class="preset-row"><select id="character-placement-preset-select" class="select-input"><option value="">Choose pose set...</option></select><button type="button" class="btn-secondary" id="btn-save-character-placement-preset">Save</button><button type="button" class="btn-secondary" id="btn-apply-character-placement-preset">Apply</button></div>
+                </div>
+              </div>
+            </div>
+            <div class="writing-stats" id="writing-stats" aria-live="polite"></div>
+          </div>
           <div class="timeline-timeline">
-            <h4>Dialogue Flow</h4>
+            <div class="section-header timeline-heading-row"><h4>Dialogue Flow</h4><span class="muted">Visual card editor</span></div>
             <div class="dialogue-cards-list" id="dialogue-cards-list">
               <!-- Dialogue Step Cards injected here -->
             </div>
             <button class="btn-secondary add-dialogue-btn" id="btn-add-dialogue-step">&#43; Add Dialogue Line</button>
+          </div>
+          <div class="script-editor hidden" id="script-editor">
+            <div class="script-editor-toolbar">
+              <div><strong>Script view</strong><span class="muted" id="script-selection-count">0 selected</span><span class="script-editor-tip">Use the bookmark and delete icons to manage individual lines.</span></div>
+              <div class="script-bulk-actions">
+                <button type="button" class="btn-secondary" id="btn-script-select-all">Select all</button>
+                <button type="button" class="btn-secondary" id="btn-script-clear-selection">Clear</button>
+                <select id="script-bulk-speaker" class="select-input script-bulk-speaker" data-asset-type="speaker" aria-label="Speaker for selected lines"></select>
+                <button type="button" class="btn-secondary" id="btn-script-apply-speaker">Set speaker</button>
+                <button type="button" class="btn-secondary" id="btn-script-duplicate-selected">Duplicate block</button>
+                <button type="button" class="btn-secondary script-toolbar-icon-button" id="btn-script-move-up" title="Move selected lines up" aria-label="Move selected lines up">&#8593;</button>
+                <button type="button" class="btn-secondary script-toolbar-icon-button" id="btn-script-move-down" title="Move selected lines down" aria-label="Move selected lines down">&#8595;</button>
+              </div>
+            </div>
+            <div class="script-lines" id="script-lines"></div>
+            <button type="button" class="btn-secondary add-dialogue-btn" id="btn-script-add-line">&#43; Add line</button>
           </div>
 
           <!-- Branching / Choices editor -->
@@ -374,13 +272,19 @@ along with this program. If not, see https://www.gnu.org/licenses/
                   </select>
                 </div>
                 
-                <div style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px;">
-                  <label style="font-weight: 600; font-size: 0.85rem; color: var(--text-main); display: block; margin-bottom: 8px;">Conditional Scene Jumps</label>
-                  <div id="scene-conditions-list" style="display: flex; flex-direction: column; gap: 8px;">
-                    <!-- Conditions list injected here -->
+                <details class="conditional-jumps-disclosure">
+                  <summary>
+                    <span class="conditional-jumps-title">Conditional Scene Jumps</span>
+                    <span class="conditional-jumps-count" id="conditional-jumps-count">0</span>
+                  </summary>
+                  <div class="conditional-jumps-body">
+                    <p class="muted conditional-jumps-help">Override the normal next scene only when a requirement is met.</p>
+                    <div id="scene-conditions-list" class="scene-conditions-list">
+                      <!-- Conditions list injected here -->
+                    </div>
+                    <button class="btn-secondary branching-add-button" id="btn-add-scene-condition">&#43; Add Conditional Jump</button>
                   </div>
-                  <button class="btn-secondary" id="btn-add-scene-condition" style="margin-top: 10px; font-size: 0.85rem; padding: 6px 12px;">&#43; Add Conditional Jump</button>
-                </div>
+                </details>
               </div>
 
               <!-- Choices builder -->
@@ -388,7 +292,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
                 <div class="choices-builder-list" id="choices-builder-list">
                   <!-- Choice cards injected here -->
                 </div>
-                <button class="btn-secondary" id="btn-add-scene-choice" style="margin-top: 10px;">&#43; Add Option Choice</button>
+                <button class="btn-secondary branching-add-button" id="btn-add-scene-choice">&#43; Add Option Choice</button>
               </div>
             </div>
           </div>
@@ -399,9 +303,13 @@ along with this program. If not, see https://www.gnu.org/licenses/
       <!-- Flowchart view representation -->
       <div class="workspace-view hidden" id="flowchart-view">
         <div class="flowchart-actions" style="display:flex; justify-content:space-between; align-items:center; gap: 16px;">
-          <button class="btn-secondary" onclick="renderFlowchart()">Refresh Map</button>
+          <div class="flowchart-toolbar-group">
+            <button class="btn-secondary" id="btn-flowchart-auto-layout">Auto Layout</button>
+            <button class="btn-secondary" onclick="renderFlowchart()">Refresh Map</button>
+            <span class="flowchart-hint">Drag tiles to arrange · scroll to zoom · drag empty space to pan</span>
+          </div>
           <div id="flowchart-warning" class="flowchart-warning-banner hidden" style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #fca5a5; padding: 8px 16px; border-radius: var(--radius-md); font-size: 0.85rem; font-weight: 500; display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-            <span>⚠️</span>
+            <span aria-hidden="true">!</span>
             <span id="flowchart-warning-text">Not all endings can be reached!</span>
           </div>
         </div>
@@ -602,13 +510,21 @@ along with this program. If not, see https://www.gnu.org/licenses/
               </div>
             </div>
 
-            <!-- Tracked Numbers Configuration -->
+            <!-- Project Variables Configuration -->
             <div class="settings-card glass-panel" style="margin-top: 20px;">
-              <h4>Tracked Numbers Setup</h4>
-              <p class="muted" style="font-size: 0.8rem; margin-bottom: 15px; line-height: 1.4;">Define numeric variables (e.g., romance, points, gold) that can be adjusted in choices and checked in conditional jumps.</p>
+              <h4>Project Variables</h4>
+              <p class="muted" style="font-size: 0.8rem; margin-bottom: 15px; line-height: 1.4;">Define boolean flags, numbers, short text values, and simple inventories for choices and conditional jumps. Logic stays visual and project-wide.</p>
               
               <div style="display: flex; gap: 8px; margin-bottom: 15px;">
-                <input type="text" id="settings-new-tracked-number" class="input-text" placeholder="e.g. romance" style="flex-grow: 1;">
+                <input type="text" id="settings-new-tracked-number" class="input-text" placeholder="Name (e.g. romance, has_key)" style="flex: 1.2;">
+                <select id="settings-new-variable-type" class="select-input" style="flex: 0.8; min-width: 115px;">
+                  <option value="number">Number</option>
+                  <option value="boolean">Boolean flag</option>
+                  <option value="text">Short text</option>
+                  <option value="inventory">Inventory</option>
+                </select>
+                <input type="text" id="settings-new-variable-default" class="input-text" placeholder="Default (0 / false / text / item:count)" style="flex: 1;">
+                <input type="text" id="settings-new-variable-description" class="input-text" placeholder="Description (optional)" style="flex: 1.4;">
                 <button class="btn-primary" onclick="window.editor.addTrackedNumber()" style="white-space: nowrap; font-size: 0.85rem; padding: 8px 16px;">+ Add Variable</button>
               </div>
 
@@ -821,7 +737,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
               </div>
               <div class="settings-form-row" style="border-top:1px solid var(--border-color); padding-top:20px; display:flex; justify-content:flex-end;">
                 <button type="button" class="btn-secondary" onclick="window.editor && window.editor.openAboutModal()" style="display:flex; align-items:center; gap:8px;">
-                  ℹ️ About VNFairy
+                  About VNFairy
                 </button>
               </div>
             </div>
@@ -833,7 +749,8 @@ along with this program. If not, see https://www.gnu.org/licenses/
     <!-- Right Panel: Real-time Stage Preview & Card Inspector -->
     <aside class="preview-panel glass-panel">
       <div class="preview-header">
-        <h3>Stage Layout Preview</h3>
+        <span class="panel-eyebrow">Live scene</span>
+        <h3>Stage preview</h3>
       </div>
       
       <!-- Stage screen miniature mockup -->
@@ -869,7 +786,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
         <div class="inspector-form hidden" id="inspector-form">
           <div class="input-group" id="inspector-speaker-group">
             <label>Speaker Character</label>
-            <select id="step-speaker-select" class="select-input" data-asset-type="char">
+            <select id="step-speaker-select" class="select-input" data-asset-type="speaker">
               <option value="narrator">Narrator (No Character Sprite Highlighted)</option>
             </select>
           </div>
@@ -962,10 +879,26 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
   <!-- Projects Selector Dashboard Portal -->
   <div id="dashboard-portal" class="dashboard-container">
+    <div class="dashboard-topbar">
+      <div class="dashboard-brand">
+        <span class="logo-emoji" aria-hidden="true">VF</span>
+        <div>
+          <strong>VNFairy</strong>
+          <span>Story Studio</span>
+        </div>
+      </div>
+      <span class="dashboard-version">Local workspace</span>
+    </div>
     <div class="dashboard-header">
       <div>
-        <h1><span>🧚‍♀️</span> VNFairy Projects Portal</h1>
-        <p class="dashboard-subtitle">Manage and customize your HTML5 visual novel projects</p>
+        <p class="eyebrow">Workspace</p>
+        <h1>Your stories</h1>
+        <p class="dashboard-subtitle">Create, edit and preview your visual novel projects.</p>
+      </div>
+      <div class="dashboard-header-actions">
+        <button class="btn-secondary" id="btn-dashboard-import">Import .vnfairy</button>
+        <button class="btn-primary" id="btn-dashboard-create">New story</button>
+        <input type="file" id="project-import-input" accept=".vnfairy,application/vnd.vnfairy.project+zip" class="hidden">
       </div>
     </div>
     
@@ -975,6 +908,169 @@ along with this program. If not, see https://www.gnu.org/licenses/
   </div>
 
   <!-- Modals -->
+
+  <!-- Asset Management Modal -->
+  <div class="modal hidden" id="asset-management-modal">
+    <div class="modal-backdrop" onclick="closeModal('asset-management-modal')"></div>
+    <div class="modal-content management-modal-content glass-panel animate-scale">
+      <div class="modal-header management-modal-header">
+        <div><span class="panel-eyebrow">Project library</span><h2>Asset Management</h2><p class="muted">Upload, organise and maintain project media.</p></div>
+        <button class="modal-close" onclick="closeModal('asset-management-modal')">&times;</button>
+      </div>
+      <div class="modal-body management-modal-body" id="asset-management">
+        <div class="management-toolbar">
+          <div class="management-search-row">
+            <input type="search" id="asset-manager-search" class="input-text" placeholder="Search names, tags, or types" aria-label="Search all assets">
+            <select id="asset-manager-folder-filter" class="select-input" aria-label="Filter by folder"><option value="">All folders</option></select>
+            <input type="text" id="asset-manager-tag-filter" class="input-text" placeholder="Filter by tag" aria-label="Filter by tag">
+            <label class="checkbox-container compact-checkbox"><input type="checkbox" id="asset-manager-favorites-only"><span class="checkmark"></span><span class="label-text">Favourites only</span></label>
+            <select id="asset-manager-sort" class="select-input" aria-label="Sort assets"><option value="name">Sort: name</option><option value="size">Sort: size</option><option value="usage">Sort: usage</option><option value="type">Sort: type</option><option value="recent">Sort: recent</option></select>
+          </div>
+          <div class="management-actions-row">
+            <span class="management-summary"><strong id="asset-manager-summary">0 assets</strong><span class="muted" id="asset-manager-unused-summary"></span></span>
+            <button type="button" class="btn-secondary" id="btn-new-asset-folder">New folder</button>
+            <select id="asset-bulk-upload-type" class="select-input" aria-label="Bulk upload asset type"><option value="bg">Backgrounds</option><option value="char">Character sprites</option><option value="music">Music</option><option value="sound">Voice clips</option><option value="video">Videos</option></select>
+            <button type="button" class="btn-primary" id="btn-bulk-asset-upload">Bulk upload</button>
+            <input type="file" id="asset-bulk-uploader" class="hidden" multiple>
+          </div>
+        </div>
+        <div class="management-tabs" role="tablist" aria-label="Asset categories">
+          <button type="button" class="management-tab active" data-management-target="asset-panel-bg" onclick="switchManagementTab('asset-management','asset-panel-bg')">Backgrounds <span id="asset-count-bg">0</span></button>
+          <button type="button" class="management-tab" data-management-target="asset-panel-char" onclick="switchManagementTab('asset-management','asset-panel-char')">Characters <span id="asset-count-char">0</span></button>
+          <button type="button" class="management-tab" data-management-target="asset-panel-music" onclick="switchManagementTab('asset-management','asset-panel-music')">Music <span id="asset-count-music">0</span></button>
+          <button type="button" class="management-tab" data-management-target="asset-panel-sound" onclick="switchManagementTab('asset-management','asset-panel-sound')">Voice &amp; sound <span id="asset-count-sound">0</span></button>
+          <button type="button" class="management-tab" data-management-target="asset-panel-video" onclick="switchManagementTab('asset-management','asset-panel-video')">Videos <span id="asset-count-video">0</span></button>
+        </div>
+        <div class="bulk-management-bar">
+          <span><strong id="asset-selection-count">0 selected</strong></span>
+          <button type="button" class="btn-secondary" id="btn-select-visible-assets">Select visible</button>
+          <button type="button" class="btn-secondary" id="btn-clear-asset-selection">Clear</button>
+          <select id="asset-bulk-folder" class="select-input"><option value="">Move to folder…</option></select>
+          <button type="button" class="btn-secondary" id="btn-apply-asset-folder">Apply folder</button>
+          <input type="text" id="asset-bulk-tags" class="input-text" placeholder="Add tags">
+          <button type="button" class="btn-secondary" id="btn-apply-asset-tags">Add tags</button>
+          <button type="button" class="btn-danger" id="btn-delete-selected-assets">Delete selected</button>
+        </div>
+        <div class="management-panels">
+          <section class="management-panel" id="asset-panel-bg" data-asset-type="bg">
+            <div class="management-panel-heading"><div><h3>Backgrounds</h3><p class="muted">Scene and menu background artwork.</p></div><div><input type="search" id="search-asset-bg" class="input-text" placeholder="Search backgrounds"><button class="btn-primary" onclick="triggerAssetUpload('bg')">Upload background</button></div></div>
+            <div class="asset-grid management-asset-grid" id="asset-bg-list"></div>
+          </section>
+          <section class="management-panel hidden" id="asset-panel-char" data-asset-type="char">
+            <div class="management-panel-heading"><div><h3>Characters</h3><p class="muted">Sprite files and configured characters.</p></div><div><input type="search" id="search-asset-char" class="input-text" placeholder="Search characters"><button class="btn-secondary" onclick="triggerAssetUpload('char')">Upload art</button><button class="btn-primary" id="btn-add-character">New character</button></div></div>
+            <div class="character-assets-list" id="asset-char-list"></div>
+          </section>
+          <section class="management-panel hidden" id="asset-panel-music" data-asset-type="music">
+            <div class="management-panel-heading"><div><h3>Music</h3><p class="muted">Background music and title tracks.</p></div><div><input type="search" id="search-asset-music" class="input-text" placeholder="Search music"><button class="btn-primary" onclick="triggerAssetUpload('music')">Upload music</button></div></div>
+            <div class="audio-assets-list management-audio-list" id="asset-music-list"></div>
+          </section>
+          <section class="management-panel hidden" id="asset-panel-sound" data-asset-type="sound">
+            <div class="management-panel-heading"><div><h3>Voice &amp; sound</h3><p class="muted">Voice clips and interface sound effects.</p></div><div><input type="search" id="search-asset-sound" class="input-text" placeholder="Search voice clips"><button class="btn-primary" onclick="triggerAssetUpload('sound')">Upload sound</button></div></div>
+            <div class="audio-assets-list management-audio-list" id="asset-sound-list"></div>
+          </section>
+          <section class="management-panel hidden" id="asset-panel-video" data-asset-type="video">
+            <div class="management-panel-heading"><div><h3>Videos</h3><p class="muted">Cutscenes and full-screen video sequences.</p></div><div><input type="search" id="search-asset-video" class="input-text" placeholder="Search videos"><button class="btn-primary" onclick="triggerAssetUpload('video')">Upload video</button></div></div>
+            <div class="audio-assets-list management-audio-list" id="asset-video-list"></div>
+          </section>
+        </div>
+        <input type="file" id="asset-file-uploader" class="hidden">
+      </div>
+    </div>
+  </div>
+
+  <!-- Scene Management Modal -->
+  <div class="modal hidden" id="scene-management-modal">
+    <div class="modal-backdrop" onclick="closeModal('scene-management-modal')"></div>
+    <div class="modal-content management-modal-content glass-panel animate-scale">
+      <div class="modal-header management-modal-header">
+        <div><span class="panel-eyebrow">Story structure</span><h2>Scene Management</h2><p class="muted">Review, group and update scenes across the whole project.</p></div>
+        <button class="modal-close" onclick="closeModal('scene-management-modal')">&times;</button>
+      </div>
+      <div class="modal-body management-modal-body" id="scene-management">
+        <div class="management-tabs" role="tablist" aria-label="Scene management sections">
+          <button type="button" class="management-tab active" data-management-target="scene-management-scenes" onclick="switchManagementTab('scene-management','scene-management-scenes')">Scenes</button>
+          <button type="button" class="management-tab" data-management-target="scene-management-groups" onclick="switchManagementTab('scene-management','scene-management-groups')">Groups</button>
+        </div>
+        <section class="management-panel" id="scene-management-scenes">
+          <div class="management-toolbar scene-management-filters">
+            <input type="search" id="scene-management-search" class="input-text" placeholder="Search scene name, ID or tag">
+            <select id="scene-management-status-filter" class="select-input"><option value="">All statuses</option><option value="draft">Draft</option><option value="review">Review</option><option value="final">Final</option></select>
+            <select id="scene-management-group-filter" class="select-input"><option value="">All groups</option><option value="ungrouped">Ungrouped</option></select>
+            <button type="button" class="btn-primary" id="btn-manage-add-scene">+ New scene</button>
+          </div>
+          <div class="bulk-management-bar">
+            <strong id="scene-selection-count">0 selected</strong>
+            <button type="button" class="btn-secondary" id="btn-select-visible-scenes">Select visible</button>
+            <button type="button" class="btn-secondary" id="btn-clear-scene-selection">Clear</button>
+            <select id="scene-bulk-group" class="select-input"><option value="">Move to group…</option><option value="ungrouped">No group</option></select>
+            <button type="button" class="btn-secondary" id="btn-apply-scene-group">Apply group</button>
+            <select id="scene-bulk-status" class="select-input"><option value="">Set status…</option><option value="draft">Draft</option><option value="review">Review</option><option value="final">Final</option></select>
+            <button type="button" class="btn-secondary" id="btn-apply-scene-status">Apply status</button>
+            <button type="button" class="btn-danger" id="btn-delete-selected-scenes">Delete selected</button>
+          </div>
+          <div class="scene-management-summary muted" id="scene-management-summary"></div>
+          <div class="scene-management-list" id="scene-management-list"></div>
+        </section>
+        <section class="management-panel hidden" id="scene-management-groups">
+          <div class="management-panel-heading"><div><h3>Scene groups</h3><p class="muted">Create and maintain the sections used to organise your story.</p></div><button type="button" class="btn-primary" id="btn-manage-add-group">+ New group</button></div>
+          <div class="scene-group-management-list" id="scene-group-management-list"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scene Settings Modal -->
+  <div class="modal hidden" id="scene-settings-modal">
+    <div class="modal-backdrop" onclick="closeModal('scene-settings-modal')"></div>
+    <div class="modal-content scene-settings-modal-content glass-panel animate-scale">
+      <div class="modal-header management-modal-header">
+        <div><span class="panel-eyebrow">Selected scene</span><h2 id="scene-settings-modal-title">Scene Settings</h2><p class="muted">Configure identity, media and player behaviour.</p></div>
+        <button class="modal-close" onclick="closeModal('scene-settings-modal')">&times;</button>
+      </div>
+      <div class="modal-body management-modal-body" id="scene-settings-management">
+        <div class="management-tabs" role="tablist" aria-label="Scene setting sections">
+          <button type="button" class="management-tab active" data-management-target="scene-settings-basics" onclick="switchManagementTab('scene-settings-management','scene-settings-basics')">Basics</button>
+          <button type="button" class="management-tab" data-management-target="scene-settings-media" onclick="switchManagementTab('scene-settings-management','scene-settings-media')">Media</button>
+          <button type="button" class="management-tab" data-management-target="scene-settings-behaviour" onclick="switchManagementTab('scene-settings-management','scene-settings-behaviour')">Behaviour</button>
+        </div>
+        <div class="scene-settings-tab-panel" id="scene-settings-basics">
+          <div class="scene-settings-form-grid">
+            <div class="input-group"><label>Scene ID</label><input type="text" id="scene-id-input" class="input-text" readonly></div>
+            <div class="input-group"><label>Display Name</label><input type="text" id="scene-name-input" class="input-text" placeholder="e.g. Entering Forest"></div>
+            <div class="input-group"><label>Status</label><select id="scene-status-select" class="select-input"><option value="draft">Draft</option><option value="review">Review</option><option value="final">Final</option></select></div>
+            <div class="input-group"><label>Scene Group</label><select id="scene-group-select" class="select-input"><option value="">No Group</option></select></div>
+            <div class="input-group scene-settings-wide"><label>Tags</label><input type="text" id="scene-tags-input" class="input-text" placeholder="e.g. opening, forest, route-a"></div>
+            <div class="input-group scene-settings-wide"><label>Scene Notes</label><textarea id="scene-notes-input" class="textarea-input scene-notes-input" rows="6" placeholder="Capture intent, continuity, or revision notes..."></textarea></div>
+          </div>
+        </div>
+        <div class="scene-settings-tab-panel hidden" id="scene-settings-media">
+          <div class="scene-settings-form-grid">
+            <div class="input-group"><label>Scene Mode</label><select id="scene-mode-select" class="select-input"><option value="normal">Normal Dialogue</option><option value="video">Video Cutscene</option><option value="text">Fullscreen Text Cutscene</option><option value="autotext">Auto Text Cutscene</option><option value="image">Image Cutscene</option></select></div>
+            <div class="input-group" id="scene-bg-group"><label>Scene Background</label><select id="scene-bg-select" class="select-input" data-asset-type="bg"><option value="">Default background (Novel theme)</option><option value="__solid_white__">Solid white background</option></select></div>
+            <div class="input-group" id="scene-music-group"><label>Scene Music</label><select id="scene-music-select" class="select-input" data-asset-type="music"><option value="">Continue Current BGM</option><option value="stop">Stop Music</option></select></div>
+            <div class="input-group" id="scene-font-group"><label>Dialogue Font</label><select id="scene-font-select" class="select-input" style="font-weight:500;"><option value="Arial, Helvetica, sans-serif">Arial (Sans-Serif)</option><option value="Georgia, serif">Georgia (Serif)</option><option value="Verdana, Geneva, sans-serif">Verdana (Sans-Serif)</option><option value="Caveat, 'Segoe Print', 'Bradley Hand', cursive">Caveat (Handwriting)</option><option value="Consolas, 'Courier New', monospace">Consolas / Courier (Monospace)</option></select></div>
+            <div class="input-group hidden" id="scene-video-group"><label>Cutscene Video</label><select id="scene-video-select" class="select-input" data-asset-type="video"><option value="">Select Video...</option></select></div>
+            <div class="input-group hidden" id="scene-text-color-group"><label>Text Color</label><input type="color" id="scene-text-color" value="#ffffff" class="select-input scene-color-input"></div>
+            <div class="input-group hidden" id="scene-char-transition-group"><label>Character Transition</label><select id="scene-char-transition" class="select-input"><option value="fade">Fade (In-Place)</option><option value="slide">Slide (Horizontal)</option><option value="off">Off (Instant)</option></select></div>
+            <div class="checkbox-field hidden" id="scene-image-autoprogress-group"><label class="checkbox-container"><input type="checkbox" id="scene-image-autoprogress"><span class="checkmark"></span><span class="label-text">Auto Progress Scene</span></label></div>
+            <div class="input-group hidden" id="scene-image-autoprogress-duration-group"><label>Display Duration (seconds)</label><input type="number" id="scene-image-autoprogress-duration" class="input-text" min="1" step="0.5" placeholder="e.g. 3"></div>
+          </div>
+        </div>
+        <div class="scene-settings-tab-panel hidden" id="scene-settings-behaviour">
+          <div class="scene-settings-form-grid behaviour-grid">
+            <div class="checkbox-field"><label class="checkbox-container"><input type="checkbox" id="scene-is-ending"><span class="checkmark"></span><span class="label-text">Is Route Ending Scene</span></label></div>
+            <div class="input-group hidden" id="ending-name-group"><label>Ending Route Name</label><input type="text" id="scene-ending-name" class="input-text" placeholder="e.g. Ending Name"><label>Ending Sound Effect (Optional)</label><select id="scene-ending-sfx" class="select-input"><option value="">No Sound Effect</option><option value="synth_ending">Retro Synthesized Chime</option></select></div>
+            <div class="input-group" id="scene-transition-style-group"><label>Scene Transition</label><select id="scene-transition-style" class="select-input"><option value="off">Off (Instant)</option><option value="fade">Fade In/Out (Black)</option><option value="next">Fade to Next Scene</option></select></div>
+            <div class="checkbox-field hidden" id="scene-slide-down-group"><label class="checkbox-container"><input type="checkbox" id="scene-slide-down"><span class="checkmark"></span><span class="label-text">Slide Down Text Animation</span></label></div>
+            <div class="checkbox-field"><label class="checkbox-container"><input type="checkbox" id="scene-no-dim-characters"><span class="checkmark"></span><span class="label-text">Disable Character Dimming</span></label></div>
+            <div class="checkbox-field"><label class="checkbox-container"><input type="checkbox" id="scene-bookmarked"><span class="checkmark"></span><span class="label-text">Bookmark this scene</span></label></div>
+            <div class="checkbox-field hidden" id="scene-hide-menu-group"><label class="checkbox-container"><input type="checkbox" id="scene-hide-quick-menu"><span class="checkmark"></span><span class="label-text">Hide Game Menu</span></label></div>
+          </div>
+        </div>
+        <div class="management-modal-footer"><button type="button" class="btn-primary" onclick="closeModal('scene-settings-modal')">Done</button></div>
+      </div>
+    </div>
+  </div>
 
   <!-- Live Test Play Modal -->
   <div class="modal hidden" id="test-play-modal">
@@ -1025,6 +1121,11 @@ along with this program. If not, see https://www.gnu.org/licenses/
               </div>
               <div class="expressions-list" id="char-expressions-editor-list" style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
                 <!-- Expressions input cards -->
+              </div>
+              <div class="input-group" style="margin-top:12px;">
+                <label for="char-default-expression-select">Default expression</label>
+                <select id="char-default-expression-select" class="select-input"><option value="">Use first expression</option></select>
+                <span class="muted" style="font-size:0.75rem;">Used when a new pose does not specify an expression.</span>
               </div>
             </div>
           </div>
@@ -1083,7 +1184,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
     <div class="modal-backdrop" onclick="closeModal('project-create-modal')"></div>
     <div class="modal-content glass-panel animate-scale" style="max-width: 450px;">
       <div class="modal-header">
-        <h2>Create New Project</h2>
+        <h2>Create a new story</h2>
         <button class="modal-close" onclick="closeModal('project-create-modal')">&times;</button>
       </div>
       <div class="modal-body">
@@ -1102,8 +1203,25 @@ along with this program. If not, see https://www.gnu.org/licenses/
         
         <div style="margin-top: 24px; display:flex; justify-content: flex-end; gap:12px;">
           <button class="btn-secondary" onclick="closeModal('project-create-modal')">Cancel</button>
-          <button class="btn-primary" id="btn-submit-create-project">Create Project</button>
+          <button class="btn-primary" id="btn-submit-create-project">Create story</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recovery Versions Modal -->
+  <div class="modal hidden" id="project-recovery-modal">
+    <div class="modal-backdrop" onclick="closeModal('project-recovery-modal')"></div>
+    <div class="modal-content glass-panel animate-scale" style="max-width: 680px;">
+      <div class="modal-header">
+        <div>
+          <h2>Restore previous version</h2>
+          <p class="muted" style="margin-top:6px;">The current version is kept as a recovery snapshot when you restore.</p>
+        </div>
+        <button class="modal-close" onclick="closeModal('project-recovery-modal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="project-recovery-list" class="recovery-list"></div>
       </div>
     </div>
   </div>
@@ -1150,7 +1268,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
           <h1 style="margin:0 0 4px 0; font-family:var(--font-display); font-size:2.2rem; color:var(--primary);">VNFairy</h1>
           <div style="font-size:0.95rem; color:var(--text-muted);">Visual Novel Creation Suite</div>
           <div style="display:inline-block; margin-top:8px; padding:3px 10px; background:rgba(99,102,241,0.15); color:#818cf8; border-radius:12px; font-size:0.8rem; font-weight:600;">
-            Version 1.0.0
+            Version 2.0.0
           </div>
         </div>
         
@@ -1173,38 +1291,41 @@ along with this program. If not, see https://www.gnu.org/licenses/
     <div class="modal-backdrop" onclick="closeModal('guide-modal')"></div>
     <div class="modal-content guide-modal-content glass-panel animate-scale">
       <div class="modal-header">
-        <h2>🧚‍♀️ VNFairy Creator Guide</h2>
+        <h2>VNFairy Creator Guide</h2>
         <button class="modal-close" onclick="closeModal('guide-modal')">&times;</button>
       </div>
       <div class="modal-body guide-layout">
         <!-- Sidebar Navigation -->
         <div class="guide-sidebar">
           <button class="guide-sidebar-btn active" id="btn-sec-guide-intro" onclick="window.editor && window.editor.switchGuideTopic('guide-intro')">
-            <span class="guide-btn-icon">🚀</span> Introduction &amp; Layout
+            <span class="guide-btn-icon">01</span> Introduction &amp; Layout
+          </button>
+          <button class="guide-sidebar-btn" id="btn-sec-guide-management" onclick="window.editor && window.editor.switchGuideTopic('guide-management')">
+            <span class="guide-btn-icon">02</span> Asset &amp; Scene Management
           </button>
           <button class="guide-sidebar-btn" id="btn-sec-guide-scenes" onclick="window.editor && window.editor.switchGuideTopic('guide-scenes')">
-            <span class="guide-btn-icon">🎬</span> Scene Settings &amp; Modes
+            <span class="guide-btn-icon">03</span> Scene Settings &amp; Modes
           </button>
           <button class="guide-sidebar-btn" id="btn-sec-guide-dialogue" onclick="window.editor && window.editor.switchGuideTopic('guide-dialogue')">
-            <span class="guide-btn-icon">✍️</span> Dialogue &amp; Formatting
+            <span class="guide-btn-icon">04</span> Dialogue &amp; Formatting
           </button>
           <button class="guide-sidebar-btn" id="btn-sec-guide-characters" onclick="window.editor && window.editor.switchGuideTopic('guide-characters')">
-            <span class="guide-btn-icon">🎭</span> Characters &amp; Portraits
+            <span class="guide-btn-icon">05</span> Characters &amp; Portraits
           </button>
           <button class="guide-sidebar-btn" id="btn-sec-guide-sound" onclick="window.editor && window.editor.switchGuideTopic('guide-sound')">
-            <span class="guide-btn-icon">🎵</span> BGM, Sound &amp; Voice
+            <span class="guide-btn-icon">06</span> BGM, Sound &amp; Voice
           </button>
           <button class="guide-sidebar-btn" id="btn-sec-guide-branching" onclick="window.editor && window.editor.switchGuideTopic('guide-branching')">
-            <span class="guide-btn-icon">🌿</span> Branching, Variables &amp; Logic
+            <span class="guide-btn-icon">07</span> Branching, Variables &amp; Logic
           </button>
           <button class="guide-sidebar-btn" id="btn-sec-guide-unlockables" onclick="window.editor && window.editor.switchGuideTopic('guide-unlockables')">
-            <span class="guide-btn-icon">🏆</span> Unlockables &amp; Gallery
+            <span class="guide-btn-icon">08</span> Unlockables &amp; Gallery
           </button>
           <button class="guide-sidebar-btn" id="btn-sec-guide-customization" onclick="window.editor && window.editor.switchGuideTopic('guide-customization')">
-            <span class="guide-btn-icon">⚙️</span> Title &amp; Credits Setup
+            <span class="guide-btn-icon">09</span> Title &amp; Credits Setup
           </button>
           <button class="guide-sidebar-btn" id="btn-sec-guide-testing" onclick="window.editor && window.editor.switchGuideTopic('guide-testing')">
-            <span class="guide-btn-icon">⚡</span> Test Play &amp; Packaging
+            <span class="guide-btn-icon">10</span> Preview &amp; Exporting
           </button>
         </div>
 
@@ -1212,45 +1333,69 @@ along with this program. If not, see https://www.gnu.org/licenses/
         <div class="guide-content" id="guide-content-area">
           <!-- Introduction & Layout -->
           <div class="guide-section" id="guide-intro">
-            <h3>🚀 Welcome to VNFairy Designer!</h3>
+            <h3>Welcome to VNFairy Designer</h3>
             <p>VNFairy is a visual design suite for creating stunning, branch-based visual novels running on modern HTML5 standards. You don't need any coding experience: the Designer handles your storyline structure, assets integration, and settings, and generates a packaged, standalone game.</p>
             
             <div class="guide-alert info">
-              <strong>💡 Pro Tip:</strong> Use the dark and light mode toggle button (🌙/☀️) in the top-right header anytime to adjust the workspace visibility to your workspace ambient lighting.
+              <strong>Tip:</strong> Use the light and dark mode control in the top-right header to suit your workspace lighting.
             </div>
 
             <h4>Understanding the Workspace Layout</h4>
-            <p>The visual designer is split into three main modules that cover asset loading, timeline orchestration, and real-time visualization:</p>
+            <p>The visual designer is split into three main areas for browsing the project, writing the story, and checking the result:</p>
             
             <div class="guide-step">
               <span class="step-num">1</span>
               <div>
-                <strong>Left Sidebar (Assets &amp; Scenes Tree):</strong>
-                <p>Manage your scenes structure and files. The <em>Scenes</em> tab organizes scene groups and files. The <em>Assets</em> tab acts as your file repository, divided into: Backgrounds, Characters, Music BGM, Voice Clips, and Video Cutscenes.</p>
+                <strong>Left Sidebar (Scenes &amp; Assets):</strong>
+                <p>Browse scenes, groups, and collapsible asset categories at a glance. Use the compact <strong>Manage</strong> button in either tab to open the larger workspace for searching, organising, and bulk changes.</p>
               </div>
             </div>
             
             <div class="guide-step">
               <span class="step-num">2</span>
               <div>
-                <strong>Center Workspace (Action Tabs):</strong>
-                <p>This is where you orchestrate the visual novel. Toggle between four central tabs: <em>Dialogue Timeline</em> (build dialog and events line by line), <em>Flowchart Map</em> (visualize ending loops and branch routing), <em>Unlockables</em> (configure gallery triggers), and <em>Novel Settings</em> (title layouts, credit scroll, and custom variables).</p>
+                <strong>Center Workspace:</strong>
+                <p>Switch between <em>Dialogue</em> for Cards or Script writing, <em>Story map</em> for routes, <em>Unlockables</em> for gallery content, and <em>Settings</em> for novel-wide presentation and variables.</p>
               </div>
             </div>
 
             <div class="guide-step">
               <span class="step-num">3</span>
               <div>
-                <strong>Right Panel (Preview &amp; Step Inspector):</strong>
-                <p>Displays a live, real-time stage mockup of the selected dialogue step. Beneath the mockup, the <em>Dialogue Step Properties Inspector</em> configures active speakers, sound effects/dialogue voice files, inline bold/italic modifiers, and speaker stage slots.</p>
+                <strong>Right Panel (Stage Preview &amp; Inspector):</strong>
+                <p>Preview the active line and configure its voice, formatting, and character placements. The preview follows the novel's light or dark theme, including the dialogue box and readable text colours.</p>
               </div>
             </div>
           </div>
 
+          <!-- Asset & Scene Management -->
+          <div class="guide-section hidden" id="guide-management">
+            <h3>Asset &amp; Scene Management</h3>
+            <p>The sidebars keep everyday browsing compact. Open their <strong>Manage</strong> buttons whenever you need a larger, searchable workspace or want to change several items together.</p>
+
+            <h4>Asset Management</h4>
+            <p>The asset workspace separates <strong>Backgrounds</strong>, <strong>Characters</strong>, <strong>Music</strong>, <strong>Voice &amp; sound</strong>, and <strong>Videos</strong> into tabs. You can search by name, tag, or type; filter by folder or favourites; sort the library; inspect usage and unused files; preview media; and replace an asset everywhere it is referenced.</p>
+            <ul>
+              <li>Choose an asset type and use <strong>Bulk upload</strong> to add several files together.</li>
+              <li>Select visible assets to move them to a virtual folder, add tags, or delete them in one action.</li>
+              <li>Create configured characters from the Characters tab with <strong>New character</strong>.</li>
+            </ul>
+
+            <h4>Scene Management</h4>
+            <p>Use the <strong>Scenes</strong> tab to search by name, ID, or tag and filter by status or group. Selected scenes can be moved to a group, assigned Draft, Review, or Final status, or deleted together. Each scene row also provides Open, Settings, Duplicate, and Delete actions.</p>
+            <p>Use the <strong>Groups</strong> tab to create and maintain the sections used to organise the story.</p>
+          </div>
+
           <!-- Scene Settings & Modes -->
           <div class="guide-section hidden" id="guide-scenes">
-            <h3>🎬 Scene Settings &amp; Modes</h3>
-            <p>Visual novels are split into individual <strong>Scenes</strong>. When creating or editing a scene, you can customize its behaviors, transitions, and layout styles under the collapsible <strong>⚙️ Scene Settings</strong> panel at the top of the Dialogue Timeline.</p>
+            <h3>Scene Settings &amp; Modes</h3>
+            <p>Visual novels are split into individual <strong>Scenes</strong>. Select a scene and choose <strong>Scene settings</strong> above the Dialogue workspace to open its tabbed settings modal. Basics, Media, and Behaviour are separated so related controls stay easy to find.</p>
+
+            <ul>
+              <li><strong>Basics:</strong> Display name, status, group, tags, and continuity or revision notes.</li>
+              <li><strong>Media:</strong> Scene mode, background, music, dialogue font, and mode-specific video or text settings.</li>
+              <li><strong>Behaviour:</strong> Endings, transitions, character dimming, bookmarks, and player menu behaviour.</li>
+            </ul>
 
             <h4>Scene Modes</h4>
             <p>Each scene has a primary layout template called a <strong>Scene Mode</strong>:</p>
@@ -1273,7 +1418,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
               <tbody>
                 <tr>
                   <td><strong>Scene Background</strong></td>
-                  <td>The backdrop image shown. Supports a crossfade transition on scene changes.</td>
+                  <td>Use an uploaded image, <strong>Default background (Novel theme)</strong>, or <strong>Solid white background</strong>. The stage preview keeps dialogue and text colours aligned with the novel's selected light or dark theme.</td>
                 </tr>
                 <tr>
                   <td><strong>Scene Music</strong></td>
@@ -1293,18 +1438,30 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
           <!-- Dialogue & Formatting -->
           <div class="guide-section hidden" id="guide-dialogue">
-            <h3>✍️ Writing Dialogue &amp; Formatting</h3>
-            <p>Your dialogue is written line-by-line in the Dialogue Timeline. Clicking <strong>+ Add Dialogue Line</strong> adds a card, while clicking a card opens its properties in the Inspector on the right.</p>
+            <h3>Writing Dialogue &amp; Formatting</h3>
+            <p>The <strong>Dialogue</strong> workspace has two views. <strong>Cards</strong> provides a visual line-by-line editor and inspector, while <strong>Script</strong> keeps longer scenes compact and makes bulk editing easier.</p>
+
+            <h4>Cards View</h4>
+            <p>Choose <strong>+ Add Dialogue Line</strong> to add a card. Clicking a card opens its properties in the Inspector on the right, where you can set voice, formatting, and character placement.</p>
 
             <h4>Timeline Navigation Shortcuts</h4>
             <p>To speed up visual novel writing, the editor supports the following timeline shortcut interactions:</p>
             <ul>
               <li>Click a dialogue card to select it and update properties.</li>
               <li>Double-click inside the dialogue textarea to edit content directly.</li>
-              <li>Use the trash bin icon (🗑️) on the card header to remove steps.</li>
-              <li>Click the duplicate icon (📋) to duplicate a step, preserving character slot configurations and speaker settings.</li>
+              <li>Use the delete icon on the card header to remove steps.</li>
+              <li>Use the duplicate control to copy a step while preserving character placement and speaker settings.</li>
               <li>Drag dialogue cards up or down to re-order your narration sequence.</li>
             </ul>
+
+            <h4>Script View &amp; Bulk Editing</h4>
+            <p>Switch to <strong>Script</strong> or press <strong>Alt+S</strong> to work with a denser list of lines. Each speaker field opens the searchable character chooser and includes <strong>Narrator</strong>. Use the bookmark and delete icons on individual rows, or select several lines to:</p>
+            <ul>
+              <li>Set one speaker for the whole selection using the same searchable chooser.</li>
+              <li>Duplicate the selected block.</li>
+              <li>Move the block with the up and down arrow buttons.</li>
+            </ul>
+            <p>The toolbar also provides story-wide <strong>Search &amp; replace</strong> and reusable scene, dialogue-layout, and character pose presets.</p>
 
             <h4>Text Styling &amp; Typewriter FX</h4>
             <p>VNFairy renders dialogue on-screen using a smooth typewriter animation. Under the Inspector's <strong>Text Formatting</strong> section, you can format selected lines:</p>
@@ -1320,11 +1477,11 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
           <!-- Characters & Portraits -->
           <div class="guide-section hidden" id="guide-characters">
-            <h3>🎭 Characters &amp; Expressions</h3>
+            <h3>Characters &amp; Expressions</h3>
             <p>Portraits are the primary visual driver of visual novels. VNFairy supports multi-expression characters that enter, exit, and adjust their position on the stage.</p>
 
             <h4>1. Creating a Character</h4>
-            <p>Before putting a character on the stage, you must define them. Under the <strong>Assets tab</strong> (left panel), click the plus (<strong>+</strong>) button in the <em>Characters</em> section. In the Creator modal:</p>
+            <p>Before putting a character on the stage, you must define them. Open the <strong>Assets</strong> sidebar tab, choose <strong>Manage</strong>, then use <strong>New character</strong> on the Characters tab. In the Creator modal:</p>
             <ol>
               <li>Input a <strong>Character Name</strong> (displayed in dialogue boxes).</li>
               <li>Select a custom <strong>Dialogue Name Text Color</strong> (used in-game to identify active speakers).</li>
@@ -1348,7 +1505,7 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
           <!-- BGM, Sound & Voice -->
           <div class="guide-section hidden" id="guide-sound">
-            <h3>🎵 Audio: BGM, Sound, &amp; Voice Clips</h3>
+            <h3>Audio: BGM, Sound, &amp; Voice Clips</h3>
             <p>Enhance the immersion of your visual novel with music tracks, sound effects, and character vocal performances.</p>
 
             <h4>Background Music (BGM)</h4>
@@ -1369,8 +1526,8 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
           <!-- Branching, Variables & Logic -->
           <div class="guide-section hidden" id="guide-branching">
-            <h3>🌿 Branching, Variables &amp; Logic</h3>
-            <p>Branching creates the interactive pathing that makes visual novels compelling. Manage branching at the bottom of the Dialogue Timeline under <strong>Scene Advancement &amp; Branching</strong>.</p>
+            <h3>Branching, Variables &amp; Logic</h3>
+            <p>Branching creates the interactive pathing that makes visual novels compelling. Manage it at the bottom of the <strong>Dialogue</strong> workspace under <strong>Scene Advancement &amp; Branching</strong>.</p>
 
             <h4>Linear vs. Option Choices</h4>
             <ul>
@@ -1378,27 +1535,27 @@ along with this program. If not, see https://www.gnu.org/licenses/
               <li><strong>Show Choices (Branching):</strong> Prompts players with a list of interactive choices. Add as many choices as you want. Each choice routes to a different scene path.</li>
             </ul>
 
-            <h4>Tracked Numbers (Variables)</h4>
-            <p>Variables allow you to count score stats (e.g., character affection points, currency, key choices). First, define variables in the <strong>Novel Settings</strong> tab under <em>Tracked Numbers Setup</em> (e.g., <code>romance_lily</code>, <code>gold</code>).</p>
+            <h4>Project Variables</h4>
+            <p>Variables hold boolean flags, numbers, short text, or simple inventories. First, define them in the <strong>Novel Settings</strong> tab under <em>Project Variables</em> (e.g., <code>romance_lily</code>, <code>gold</code>, <code>has_key</code>).</p>
             
             <p>Adjust variables during options. In the Choice editor, configure modifications:</p>
             <ul>
-              <li>Add or subtract from variables (e.g., <code>+5</code> to increment affection levels, <code>-10</code> to deduct gold when purchasing items).</li>
+              <li>Use the visual action builder to set, increment, decrement, or toggle a value. Inventory actions can add, remove, or set an item count.</li>
             </ul>
 
             <h4>Conditional Scene Jumps</h4>
-            <p>In linear advancement mode, you can add <strong>Conditional Jumps</strong>. These check variables before proceeding:</p>
+            <p>In linear advancement mode, expand the collapsible <strong>Conditional Scene Jumps</strong> section to add overrides. Each rule checks a variable before routing to its destination; when no rule matches, the normal next scene is used.</p>
             <div class="guide-alert info">
               <strong>Example:</strong> "If <code>romance_lily >= 10</code>, jump to <code>lily_good_ending</code>, else jump to <code>neutral_ending</code>."
             </div>
 
             <h4>Choice Unlock Criteria</h4>
-            <p>You can lock choices in branching menus. Players can only click them if they meet specific requirements (e.g., <code>gold >= 15</code>). Locked choices display a lock icon and description text (e.g., "Requires 15 Gold") to guide player completion efforts.</p>
+            <p>Each choice card keeps its destination, <strong>Requirements</strong>, and <strong>Actions</strong> grouped clearly. Add multiple requirements to control when the choice is available and multiple actions to update flags, numbers, text, or inventory when it is selected. A choice without requirements is always available; a choice without actions only routes to its destination.</p>
           </div>
 
           <!-- Unlockables & Gallery -->
           <div class="guide-section hidden" id="guide-unlockables">
-            <h3>🏆 Unlockables &amp; Gallery Settings</h3>
+            <h3>Unlockables &amp; Gallery Settings</h3>
             <p>VNFairy features built-in support for a <strong>Gallery</strong> on the main title screen. When enabled, players can unlock and view backgrounds, character sprites, and play music tracks after playing through them in the game.</p>
 
             <h4>Configuring Gallery Content</h4>
@@ -1421,8 +1578,8 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
           <!-- Title & Credits Setup -->
           <div class="guide-section hidden" id="guide-customization">
-            <h3>⚙️ Customizing Title &amp; Credits</h3>
-            <p>Control the branding, presentation, and concluding roll of your visual novel. Configure these global settings under the <strong>Novel Settings tab</strong>.</p>
+            <h3>Customizing Title &amp; Credits</h3>
+            <p>Control the branding, presentation, and concluding roll of your visual novel. Configure these global settings under the <strong>Settings</strong> tab.</p>
 
             <h4>Title Screen Styling</h4>
             <p>Customize the visual layout of the opening splash screen:</p>
@@ -1451,11 +1608,11 @@ along with this program. If not, see https://www.gnu.org/licenses/
 
           <!-- Test Play & Packaging -->
           <div class="guide-section hidden" id="guide-testing">
-            <h3>⚡ Test Play, Debugging &amp; Exporting</h3>
+            <h3>Preview, Debugging &amp; Exporting</h3>
             <p>Once your story is orchestrated, test its branching logic and package it for distribution.</p>
 
-            <h4>Test Play &amp; Playtest Debug Panel</h4>
-            <p>Click <strong>Test Play</strong> in the header to run your novel in an interactive sandbox. If the "Test Play Debug Menu" is enabled in settings, a red <strong>🐞 Debug</strong> button will appear in the top-right corner of the player. Opening this panel allows you to:</p>
+            <h4>Preview &amp; Playtest Debug Panel</h4>
+            <p>Click <strong>Preview</strong> in the header to run your novel in an interactive sandbox. If the "Test Play Debug Menu" is enabled in settings, a red Debug button appears in the top-right corner of the player. Opening this panel allows you to:</p>
             <ul>
               <li><strong>Jump to Scene:</strong> Search and warp instantly to any scene in your game.</li>
               <li><strong>Active Variables Tracker:</strong> View real-time values of all numeric variables.</li>
@@ -1463,14 +1620,14 @@ along with this program. If not, see https://www.gnu.org/licenses/
             </ul>
 
             <h4>Packaging Your Game</h4>
-            <p>Click <strong>Package Game</strong> in the header toolbar to compile your project into a self-contained ZIP archive. VNFairy exports:
+            <p>Click <strong>Export game</strong> in the header toolbar to compile your project into a self-contained ZIP archive. VNFairy exports:
               <br>1. All media assets in their respective subfolders.
               <br>2. The playback engine structure (HTML, CSS, JS).
               <br>3. An offline fallback loading system.
             </p>
             
             <div class="guide-alert warning">
-              <strong>⚠️ CORS Policy Note:</strong> Modern browsers block loading local JSON files via <code>file://</code> due to security policies. If playing the visual novel offline, drag-and-drop the <code>project.json</code> file into the landing zone of the index.html page, or play the game using a local server.
+              <strong>Offline play:</strong> Exported games include JavaScript scene wrappers for direct local play. If you are opening an older or manually assembled project and the browser blocks local JSON, drag-and-drop its <code>project.json</code> onto the player or run it from a local web server.
             </div>
           </div>
         </div>
@@ -1484,6 +1641,18 @@ along with this program. If not, see https://www.gnu.org/licenses/
   <!-- Toast feedback -->
   <div id="toast" class="toast hidden">Saved!</div>
 
-  <script src="js/editor.js"></script>
+  <script src="shared/versioning.js?v=2.0.0"></script>
+  <script src="shared/project-schema.js?v=2.0.0"></script>
+  <script src="shared/logic-model.js?v=2.0.0"></script>
+  <script src="shared/migrations.js?v=2.0.0"></script>
+  <script src="shared/scene-model.js?v=2.0.0"></script>
+  <script src="shared/validator.js?v=2.0.0"></script>
+  <script src="shared/save-game-serializer.js?v=2.0.0"></script>
+  <script src="shared/asset-registry.js?v=2.0.0"></script>
+  <script src="js/ui/dom-views.js?v=2.0.0"></script>
+  <script src="js/ui/modal-controls.js?v=2.0.0"></script>
+  <script src="js/editor/editor-views.js?v=2.0.0"></script>
+  <script src="js/editor.js?v=2.0.0"></script>
+  <script src="js/editor/long-form-workflow.js?v=2.0.0"></script>
 </body>
 </html>

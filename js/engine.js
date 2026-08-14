@@ -25,7 +25,7 @@
 
 class VNFairyEngine {
   constructor() {
-    this.version = "1.0.0";
+    this.version = (window.VNFairyCore && window.VNFairyCore.versioning.DEFAULT_ENGINE_VERSION) || "2.0.0";
     this.project = null;
     this.currentSceneId = null;
     this.dialogueIndex = 0;
@@ -119,6 +119,11 @@ class VNFairyEngine {
   showProjectsSelectionScreen(projects) {
     const portal = document.getElementById('projects-portal');
     const list = document.getElementById('portal-projects-list');
+    if (window.VNFairyPlayerViews) {
+      window.VNFairyPlayerViews.renderProjectSelection(list, projects);
+      portal.classList.remove('hidden');
+      return;
+    }
     list.innerHTML = "";
     
     if (projects.length === 0) {
@@ -149,19 +154,22 @@ class VNFairyEngine {
   }
 
   isNewerVersion(projVer, currVer) {
-    if (!projVer) return false;
-    const pParts = projVer.split('.').map(Number);
-    const cParts = currVer.split('.').map(Number);
-    for (let i = 0; i < Math.max(pParts.length, cParts.length); i++) {
-      const p = pParts[i] || 0;
-      const c = cParts[i] || 0;
-      if (p > c) return true;
-      if (p < c) return false;
-    }
-    return false;
+    return window.VNFairyCore && window.VNFairyCore.versioning
+      ? window.VNFairyCore.versioning.isNewerVersion(projVer, currVer)
+      : false;
   }
 
   showVersionError(projVer, currVer) {
+    if (window.VNFairyDom) {
+      window.VNFairyDom.showCompatibilityError({
+        hiddenIds: ['loader', 'projects-portal', 'fallback-loader'],
+        gameLabel: 'game',
+        artifactVersion: projVer,
+        currentVersion: currVer,
+        backHref: ''
+      });
+      return;
+    }
     // Hide loader and portal selection
     document.getElementById('loader').classList.add('hidden');
     const portal = document.getElementById('projects-portal');
@@ -194,12 +202,20 @@ class VNFairyEngine {
       return;
     }
     
-    this.project = projectData;
-    const endingsKey = `vnfairy_endings_${this.project.title || 'default'}`;
-    this.unlockedEndings = JSON.parse(localStorage.getItem(endingsKey) || '[]');
-    
-    const unlockedKey = `vnfairy_unlocked_assets_${this.project.title || 'default'}`;
-    this.unlockedAssets = JSON.parse(localStorage.getItem(unlockedKey) || '[]');
+    try {
+      this.project = window.VNFairyCore && window.VNFairyCore.migrations
+        ? window.VNFairyCore.migrations.migrateProject(projectData, { engineVersion: this.version })
+        : projectData;
+    } catch (error) {
+      if (error.code === 'FUTURE_PROJECT_SCHEMA') {
+        this.showVersionError(projectData && (projectData.engineVersion || projectData.vnFairyVersion || projectData.schemaVersion), this.version);
+        return;
+      }
+      throw error;
+    }
+    if (!this.project.id) this.project.id = this.legacyProjectId(this.project);
+    this.unlockedEndings = this.readProjectStorage('endings', []);
+    this.unlockedAssets = this.readProjectStorage('unlocked_assets', []);
     
     document.getElementById('game-title').innerText = this.project.title || "My Visual Novel";
     document.getElementById('game-author').innerText = `by ${this.project.author || "Unknown"}`;
@@ -272,6 +288,62 @@ class VNFairyEngine {
       launchAction();
     }
     this.initDebugMenu();
+  }
+
+  legacyProjectId(project) {
+    const source = `${project.title || ''}|${project.author || ''}|${project.startSceneId || ''}`;
+    let hash = 5381;
+    for (let i = 0; i < source.length; i++) hash = ((hash << 5) + hash) ^ source.charCodeAt(i);
+    return `legacy-${(hash >>> 0).toString(36)}`;
+  }
+
+  projectStorageKey(namespace) {
+    const projectId = (this.project && this.project.id) || 'default';
+    return `vnfairy_${namespace}_${projectId}`;
+  }
+
+  readProjectStorage(namespace, fallback) {
+    const key = this.projectStorageKey(namespace);
+    let raw = localStorage.getItem(key);
+    if (raw === null && this.project && this.project.title) {
+      const legacyKey = `vnfairy_${namespace}_${this.project.title}`;
+      raw = localStorage.getItem(legacyKey);
+      if (raw !== null) localStorage.setItem(key, raw);
+    }
+    if (raw === null) return fallback;
+    try {
+      return JSON.parse(raw);
+    } catch (err) {
+      console.warn(`Ignoring invalid local ${namespace} data.`, err);
+      return fallback;
+    }
+  }
+
+  writeProjectStorage(namespace, value) {
+    localStorage.setItem(this.projectStorageKey(namespace), JSON.stringify(value));
+  }
+
+  getPlayerSaves() {
+    const stored = this.readProjectStorage('saves', {});
+    const saves = {};
+    Object.entries(stored && typeof stored === 'object' ? stored : {}).forEach(([slot, value]) => {
+      try {
+        saves[slot] = window.VNFairyCore && window.VNFairyCore.saveGameSerializer
+          ? window.VNFairyCore.saveGameSerializer.deserialize(value, {
+            projectId: this.project && this.project.id,
+            projectSchemaVersion: this.project && this.project.schemaVersion,
+            engineVersion: this.version
+          })
+          : value;
+      } catch (error) {
+        console.warn(`Ignoring invalid save slot ${slot}.`, error);
+      }
+    });
+    return saves;
+  }
+
+  setPlayerSaves(saves) {
+    this.writeProjectStorage('saves', saves);
   }
 
   // Initialize Audio Context on user interaction
@@ -772,10 +844,10 @@ class VNFairyEngine {
       document.getElementById('stage-screen').classList.remove('hidden');
       
       this.variables = {};
-      const tracked = (this.project.config && this.project.config.trackedNumbers) || [];
-      tracked.forEach(name => {
-        this.variables[name] = 0;
-      });
+      const logic = window.VNFairyCore && window.VNFairyCore.logicModel;
+      this.variables = logic
+        ? logic.createRuntimeVariables(this.project.config || {})
+        : {};
       this.history = [];
       this.isBeforeTitle = false;
       this.currentSceneId = null; // Clear previous scene to avoid double fade out
@@ -964,7 +1036,8 @@ class VNFairyEngine {
 
     // Load background
     let bgSrc = "";
-    if (scene.background) {
+    const useSolidWhiteBackground = scene.background === '__solid_white__';
+    if (scene.background && !useSolidWhiteBackground) {
       if (this.project.assets && this.project.assets.backgrounds) {
         const asset = this.project.assets.backgrounds.find(b => b.id === scene.background);
         if (asset) bgSrc = asset.path;
@@ -972,11 +1045,16 @@ class VNFairyEngine {
     }
     
     const stageBg = document.getElementById('stage-bg');
-    if (bgSrc) {
+    stageBg.style.backgroundColor = useSolidWhiteBackground ? '#ffffff' : 'transparent';
+    if (useSolidWhiteBackground) {
+      stageBg.style.backgroundImage = 'none';
+    } else if (bgSrc) {
       stageBg.style.backgroundImage = `url('${bgSrc}')`;
     } else {
-      // Default abstract gradient
-      stageBg.style.backgroundImage = "linear-gradient(135deg, #1e293b, #0f172a)";
+      const isLightTheme = this.project.config && this.project.config.theme === 'light';
+      stageBg.style.backgroundImage = isLightTheme
+        ? 'linear-gradient(135deg, #ffffff, #e8edf4)'
+        : 'linear-gradient(135deg, #1e293b, #0f172a)';
     }
 
     // Toggle fullscreen text and standard dialogue HUD layers
@@ -1374,7 +1452,7 @@ class VNFairyEngine {
       const slot = slots[pos];
       const data = layout[pos];
 
-      if (data && data.characterId && data.spriteId) {
+      if (data && data.characterId) {
         // Resolve sprite file path
         let spritePath = "";
         let isNonVisual = false;
@@ -1385,7 +1463,8 @@ class VNFairyEngine {
             isNonVisual = !!char.nonvisual;
             scale = char.scale !== undefined ? char.scale : 1;
             if (char.sprites) {
-              const sprite = char.sprites.find(s => s.id === data.spriteId);
+              const spriteId = data.spriteId || char.defaultExpression || (char.sprites[0] && char.sprites[0].id);
+              const sprite = char.sprites.find(s => s.id === spriteId);
               if (sprite) spritePath = sprite.path;
             }
           }
@@ -1461,9 +1540,14 @@ class VNFairyEngine {
     // Check conditional advancements/branches first!
     if (scene.conditionalBranches && scene.conditionalBranches.length > 0) {
       for (const branch of scene.conditionalBranches) {
-        if (branch.variable && this.evaluateCondition(branch.variable, branch.operator, branch.value)) {
-          if (branch.target) {
-            this.loadScene(branch.target);
+        if (this.evaluateCondition(branch)) {
+          const logic = window.VNFairyCore && window.VNFairyCore.logicModel;
+          if (logic) logic.applyActions(branch.actions, this.variables, this.project.config || {});
+          const target = window.VNFairyCore && window.VNFairyCore.sceneModel
+            ? window.VNFairyCore.sceneModel.choiceTarget(branch)
+            : branch.target;
+          if (target) {
+            this.loadScene(target);
             return;
           }
         }
@@ -1475,8 +1559,14 @@ class VNFairyEngine {
 
     if (isKinetic && scene.choices && scene.choices.length > 0) {
       // Auto-choose the first option without showing the overlay or playing SFX
-      const choice = scene.choices[0];
-      this.trackChoice(this.currentSceneId, 0, choice);
+      const logic = window.VNFairyCore && window.VNFairyCore.sceneModel;
+      const choiceIndex = scene.choices.findIndex(choice => !logic || logic.evaluateConditions(choice.conditions, this.variables, this.project.config || {}));
+      if (choiceIndex < 0) {
+        this.showChoices(scene.choices);
+        return;
+      }
+      const choice = scene.choices[choiceIndex];
+      this.trackChoice(this.currentSceneId, choiceIndex, choice);
       
       if (choice.action === 'jump') {
         this.loadScene(choice.target);
@@ -1523,35 +1613,9 @@ class VNFairyEngine {
 
   // Evaluate variable condition
   evaluateCondition(branch) {
-    if (branch.type === 'choice') {
-      const isSelected = !!this.variables['choice_' + branch.choiceId];
-      if (branch.choiceState === 'not_selected') {
-        return !isSelected;
-      }
-      return isSelected;
-    } else if (branch.type === 'number') {
-      const varName = branch.variable;
-      const currentVal = this.variables[varName] !== undefined ? Number(this.variables[varName]) : 0;
-      const val = Number(branch.value) || 0;
-      
-      switch (branch.operator) {
-        case '==':
-          return currentVal === val;
-        case '!=':
-          return currentVal !== val;
-        case '>':
-          return currentVal > val;
-        case '<':
-          return currentVal < val;
-        case '>=':
-          return currentVal >= val;
-        case '<=':
-          return currentVal <= val;
-        default:
-          return false;
-      }
-    }
-    return false;
+    return window.VNFairyCore && window.VNFairyCore.sceneModel
+      ? window.VNFairyCore.sceneModel.evaluateCondition(branch, this.variables, this.project.config || {})
+      : false;
   }
 
   // Save selected choice or auto-choice to variables
@@ -1569,19 +1633,23 @@ class VNFairyEngine {
     }
     this.variables['choice_' + sceneId + '_' + index] = true;
 
-    // 2. Custom Tracked Number adjustment:
-    if (choice.customVarName) {
-      const varName = choice.customVarName;
-      const op = choice.customVarOp || 'increase';
-      const val = Number(choice.customVarValue) !== undefined ? Number(choice.customVarValue) : 1;
-      const current = this.variables[varName] !== undefined ? Number(this.variables[varName]) : 0;
-      
-      if (op === 'increase') {
-        this.variables[varName] = current + val;
-      } else if (op === 'decrease') {
-        this.variables[varName] = current - val;
-      } else if (op === 'set') {
-        this.variables[varName] = val;
+    // 2. Apply the declarative actions from the visual builder.
+    const logic = window.VNFairyCore && window.VNFairyCore.logicModel;
+    if (logic && Array.isArray(choice.actions)) {
+      logic.applyActions(choice.actions, this.variables, this.project.config || {});
+    }
+
+    // 3. Keep the original single-number adjustment format working for old projects.
+    if (!Array.isArray(choice.actions) && choice.customVarName) {
+      const op = choice.customVarOp === 'increase' || !choice.customVarOp ? 'increment'
+        : choice.customVarOp === 'decrease' ? 'decrement'
+          : choice.customVarOp || 'set';
+      if (logic) {
+        logic.applyAction({
+          type: op,
+          variable: choice.customVarName,
+          value: choice.customVarValue !== undefined ? choice.customVarValue : 1
+        }, this.variables, this.project.config || {});
       }
     }
 
@@ -1634,13 +1702,22 @@ class VNFairyEngine {
     const scene = this.project.scenes[this.currentSceneId];
     const font = scene ? (scene.fontFamily || "Arial, Helvetica, sans-serif") : "Arial, Helvetica, sans-serif";
 
+    const definitions = this.project.config || {};
     choices.forEach((choice, index) => {
       const btn = document.createElement('button');
       btn.className = "btn-choice";
       btn.innerText = choice.text;
       btn.style.fontFamily = font;
+      const available = !(window.VNFairyCore && window.VNFairyCore.sceneModel)
+        || window.VNFairyCore.sceneModel.evaluateConditions(choice.conditions, this.variables, definitions);
+      btn.disabled = !available;
+      if (!available) {
+        btn.classList.add('choice-locked');
+        btn.title = choice.lockedText || 'This choice is not available yet.';
+      }
       
       btn.onclick = () => {
+        if (!available) return;
         this.playSynthSFX('click');
         overlay.classList.add('hidden');
         
@@ -1692,8 +1769,7 @@ class VNFairyEngine {
     const endingName = scene.endingName || "Standard Ending";
     if (!this.unlockedEndings.includes(endingName)) {
       this.unlockedEndings.push(endingName);
-      const endingsKey = `vnfairy_endings_${this.project.title || 'default'}`;
-      localStorage.setItem(endingsKey, JSON.stringify(this.unlockedEndings));
+      this.writeProjectStorage('endings', this.unlockedEndings);
     }
 
     this.checkAssetUnlock('ending', endingName);
@@ -1833,12 +1909,23 @@ class VNFairyEngine {
   }
 
   loadGameState(state) {
+    const save = window.VNFairyCore && window.VNFairyCore.saveGameSerializer
+      ? window.VNFairyCore.saveGameSerializer.deserialize(state, {
+        projectId: this.project && this.project.id,
+        projectSchemaVersion: this.project && this.project.schemaVersion,
+        engineVersion: this.version
+      })
+      : { state };
+    state = save.state;
     this.transitionWithFade(async () => {
       this.stopVideoCutscene();
       this.currentSceneId = state.currentSceneId;
       this.dialogueIndex = state.dialogueIndex;
       this.isBeforeTitle = false;
-      this.variables = state.variables || {};
+      const logic = window.VNFairyCore && window.VNFairyCore.logicModel;
+      this.variables = logic
+        ? logic.createRuntimeVariables(this.project.config || {}, state.variables || {})
+        : (state.variables || {});
       this.history = state.history || [];
       this.updateDebugVariablesList();
 
@@ -1863,12 +1950,18 @@ class VNFairyEngine {
 
       // Background
       let bgSrc = "";
-      if (scene.background && this.project.assets && this.project.assets.backgrounds) {
+      const useSolidWhiteBackground = scene.background === '__solid_white__';
+      if (scene.background && !useSolidWhiteBackground && this.project.assets && this.project.assets.backgrounds) {
         const asset = this.project.assets.backgrounds.find(b => b.id === scene.background);
         if (asset) bgSrc = asset.path;
       }
       const stageBg = document.getElementById('stage-bg');
-      stageBg.style.backgroundImage = bgSrc ? `url('${bgSrc}')` : "none";
+      stageBg.style.backgroundColor = useSolidWhiteBackground ? '#ffffff' : 'transparent';
+      const isLightTheme = this.project.config && this.project.config.theme === 'light';
+      const defaultBackground = isLightTheme
+        ? 'linear-gradient(135deg, #ffffff, #e8edf4)'
+        : 'linear-gradient(135deg, #1e293b, #0f172a)';
+      stageBg.style.backgroundImage = useSolidWhiteBackground ? 'none' : (bgSrc ? `url('${bgSrc}')` : defaultBackground);
 
       // Play music (backtrace if the current scene has "Continue BGM" / no bgm defined)
       const activeBGM = this.findActiveBGMForScene(this.currentSceneId);
@@ -1937,16 +2030,22 @@ class VNFairyEngine {
   }
 
   saveGameSlot(slotIndex) {
-    const saves = JSON.parse(localStorage.getItem(`vnfairy_saves_${this.project.title}`) || '{}');
-    saves[slotIndex] = this.getGameState();
-    localStorage.setItem(`vnfairy_saves_${this.project.title}`, JSON.stringify(saves));
+    const saves = this.getPlayerSaves();
+    saves[slotIndex] = window.VNFairyCore && window.VNFairyCore.saveGameSerializer
+      ? window.VNFairyCore.saveGameSerializer.serialize(this.getGameState(), {
+        projectId: this.project && this.project.id,
+        projectSchemaVersion: this.project && this.project.schemaVersion,
+        engineVersion: this.version
+      })
+      : this.getGameState();
+    this.setPlayerSaves(saves);
     
     this.showToast("Progress Saved!");
     this.renderSaveGrid();
   }
 
   loadGameSlot(slotIndex) {
-    const saves = JSON.parse(localStorage.getItem(`vnfairy_saves_${this.project.title}`) || '{}');
+    const saves = this.getPlayerSaves();
     const state = saves[slotIndex];
     if (state) {
       this.playSynthSFX('click');
@@ -1962,7 +2061,7 @@ class VNFairyEngine {
   }
 
   quickLoad() {
-    const saves = JSON.parse(localStorage.getItem(`vnfairy_saves_${this.project.title}`) || '{}');
+    const saves = this.getPlayerSaves();
     if (saves[0]) {
       this.loadGameSlot(0);
     } else {
@@ -2608,6 +2707,9 @@ class VNFairyEngine {
   }
 
   showConfirmModal(message) {
+    if (window.VNFairyModalControls) {
+      return window.VNFairyModalControls.confirm(message, () => this.playSynthSFX('click'));
+    }
     return new Promise((resolve) => {
       const modal = document.getElementById('confirm-modal');
       const messageEl = document.getElementById('confirm-modal-message');
@@ -2664,13 +2766,13 @@ class VNFairyEngine {
       deleteBtn.onclick = async () => {
         const activeSlot = this.hoveredSaveSlot !== null ? this.hoveredSaveSlot : this.selectedSaveSlot;
         if (activeSlot !== null) {
-          const saves = JSON.parse(localStorage.getItem(`vnfairy_saves_${this.project.title}`) || '{}');
+          const saves = this.getPlayerSaves();
           if (saves[activeSlot]) {
             this.playSynthSFX('click');
             const confirmDelete = await this.showConfirmModal(`Delete Save Slot ${activeSlot}?`);
             if (confirmDelete) {
               delete saves[activeSlot];
-              localStorage.setItem(`vnfairy_saves_${this.project.title}`, JSON.stringify(saves));
+              this.setPlayerSaves(saves);
               
               if (this.selectedSaveSlot === activeSlot) this.selectedSaveSlot = null;
               if (this.hoveredSaveSlot === activeSlot) this.hoveredSaveSlot = null;
@@ -2704,7 +2806,7 @@ class VNFairyEngine {
     if (!grid) return;
     grid.innerHTML = "";
 
-    const saves = JSON.parse(localStorage.getItem(`vnfairy_saves_${this.project.title}`) || '{}');
+    const saves = this.getPlayerSaves();
     const itemsPerPage = 12;
     const startIndex = (this.savePage - 1) * itemsPerPage;
 
@@ -2738,9 +2840,9 @@ class VNFairyEngine {
           
           const confirmDelete = await this.showConfirmModal(`Delete Save Slot ${slotIndex}?`);
           if (confirmDelete) {
-            const savesCopy = JSON.parse(localStorage.getItem(`vnfairy_saves_${this.project.title}`) || '{}');
+            const savesCopy = this.getPlayerSaves();
             delete savesCopy[slotIndex];
-            localStorage.setItem(`vnfairy_saves_${this.project.title}`, JSON.stringify(savesCopy));
+            this.setPlayerSaves(savesCopy);
             
             if (this.selectedSaveSlot === slotIndex) this.selectedSaveSlot = null;
             if (this.hoveredSaveSlot === slotIndex) this.hoveredSaveSlot = null;
@@ -2942,7 +3044,7 @@ class VNFairyEngine {
 
   // Settings persistence
   settingsKey() {
-    return `vnfairy_settings_${(this.project && this.project.title) || 'default'}`;
+    return this.projectStorageKey('settings');
   }
 
   saveSettings() {
@@ -2957,7 +3059,11 @@ class VNFairyEngine {
   }
 
   loadSettings() {
-    const raw = localStorage.getItem(this.settingsKey());
+    let raw = localStorage.getItem(this.settingsKey());
+    if (!raw && this.project && this.project.title) {
+      raw = localStorage.getItem(`vnfairy_settings_${this.project.title}`);
+      if (raw) localStorage.setItem(this.settingsKey(), raw);
+    }
     if (!raw) {
       // No saved settings yet – just sync the sliders to current defaults
       this.syncSettingsUI();
@@ -3027,8 +3133,7 @@ class VNFairyEngine {
     });
 
     if (newlyUnlocked) {
-      const unlockedKey = `vnfairy_unlocked_assets_${this.project.title || 'default'}`;
-      localStorage.setItem(unlockedKey, JSON.stringify(this.unlockedAssets));
+      this.writeProjectStorage('unlocked_assets', this.unlockedAssets);
     }
   }
 
@@ -3467,8 +3572,7 @@ class VNFairyEngine {
     // Unlock all assets
     const assetsList = this.project.unlockables || [];
     this.unlockedAssets = assetsList.map(a => a.id);
-    const unlockedKey = `vnfairy_unlocked_assets_${this.project.title || 'default'}`;
-    localStorage.setItem(unlockedKey, JSON.stringify(this.unlockedAssets));
+    this.writeProjectStorage('unlocked_assets', this.unlockedAssets);
 
     // Unlock all endings
     const endingsList = [];
@@ -3481,8 +3585,7 @@ class VNFairyEngine {
       });
     }
     this.unlockedEndings = endingsList;
-    const endingsKey = `vnfairy_endings_${this.project.title || 'default'}`;
-    localStorage.setItem(endingsKey, JSON.stringify(this.unlockedEndings));
+    this.writeProjectStorage('endings', this.unlockedEndings);
 
     alert("Debug: All gallery assets and endings have been unlocked!");
   }
@@ -3490,6 +3593,10 @@ class VNFairyEngine {
 
 // Global modal closer
 function closeModal(id) {
+  if (window.VNFairyModalControls) {
+    window.VNFairyModalControls.close(id);
+    return;
+  }
   if (window.engine) window.engine.playSynthSFX('click');
   document.getElementById(id).classList.add('hidden');
 }

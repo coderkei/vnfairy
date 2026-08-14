@@ -1,10 +1,11 @@
 {
   "name": "vnfairy",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Lightweight, beautiful visual novel engine and visual designer.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/core.test.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.16"

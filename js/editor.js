@@ -19,19 +19,61 @@
 
 class VNFairyEditor {
   constructor() {
-    this.version = "1.0.0";
+    this.version = (window.VNFairyCore && window.VNFairyCore.versioning.DEFAULT_ENGINE_VERSION) || "2.0.0";
     this.project = null;
-    this.assets = { bg: [], char: [], music: [], sound: [] };
+    this.assets = { bg: [], char: [], music: [], sound: [], video: [], metadata: {} };
+    this.assetMetadata = {};
     
     this.activeSceneId = null;
     this.activeStepIndex = null;
     this.uploadingAssetType = null;
     this.editingCharacterId = null;
+    this.selectedAssetKeys = new Set();
+    this.selectedSceneIds = new Set();
 
     this.saveTimeout = null;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.historyLimit = 100;
+    this.historyState = null;
+    this.historyContext = null;
+    this.historyCapturedAt = 0;
+    this.isApplyingHistory = false;
 
     this.loadEditorTheme();
+    this.loadEditorPalette();
     this.bindEvents();
+  }
+
+  loadEditorPalette() {
+    const palette = localStorage.getItem('vnfairy-editor-palette') || 'sage';
+    this.applyEditorPalette(palette, false);
+  }
+
+  applyEditorPalette(palette, announce = true) {
+    const allowed = ['sage', 'slate', 'umber', 'plum'];
+    const selectedPalette = allowed.includes(palette) ? palette : 'sage';
+    document.documentElement.dataset.accentPalette = selectedPalette;
+    localStorage.setItem('vnfairy-editor-palette', selectedPalette);
+
+    document.querySelectorAll('.palette-option').forEach((option) => {
+      option.classList.toggle('active', option.dataset.palette === selectedPalette);
+    });
+
+    const picker = document.getElementById('btn-palette-picker');
+    if (picker) picker.title = `Editor palette: ${selectedPalette}`;
+
+    if (announce) this.showToast(`Using ${selectedPalette} accent palette`);
+  }
+
+  togglePaletteMenu() {
+    const menu = document.getElementById('palette-menu');
+    const picker = document.getElementById('btn-palette-picker');
+    if (!menu || !picker) return;
+    const willOpen = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden', !willOpen);
+    picker.setAttribute('aria-expanded', String(willOpen));
+    if (willOpen) this.applyEditorPalette(document.documentElement.dataset.accentPalette || 'sage', false);
   }
 
   loadEditorTheme() {
@@ -50,7 +92,7 @@ class VNFairyEditor {
   updateThemeButtonUI(theme) {
     const btn = document.getElementById('btn-toggle-theme');
     if (btn) {
-      btn.innerText = theme === 'light' ? '☀️' : '🌙';
+      btn.innerText = theme === 'light' ? 'Dark' : 'Light';
       btn.title = theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode';
     }
   }
@@ -79,19 +121,21 @@ class VNFairyEditor {
   }
 
   isNewerVersion(projVer, currVer) {
-    if (!projVer) return false;
-    const pParts = projVer.split('.').map(Number);
-    const cParts = currVer.split('.').map(Number);
-    for (let i = 0; i < Math.max(pParts.length, cParts.length); i++) {
-      const p = pParts[i] || 0;
-      const c = cParts[i] || 0;
-      if (p > c) return true;
-      if (p < c) return false;
-    }
-    return false;
+    return window.VNFairyCore && window.VNFairyCore.versioning
+      ? window.VNFairyCore.versioning.isNewerVersion(projVer, currVer)
+      : false;
   }
 
   showVersionError(projVer, currVer) {
+    if (window.VNFairyDom) {
+      window.VNFairyDom.showCompatibilityError({
+        hiddenIds: ['editor-layout', 'dashboard-portal'],
+        gameLabel: 'project',
+        artifactVersion: projVer,
+        currentVersion: currVer
+      });
+      return;
+    }
     document.getElementById('editor-layout').classList.add('hidden');
     document.getElementById('dashboard-portal').classList.add('hidden');
     
@@ -240,54 +284,83 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         return;
       }
       
-      this.project = data;
-      this.project.config = this.project.config || {};
-      
-      // Ensure all choice options have unique IDs
-      if (this.project.scenes) {
-        Object.values(this.project.scenes).forEach(scene => {
-          if (scene.choices) {
-            scene.choices.forEach((choice, idx) => {
-              if (!choice.id) {
-                choice.id = "choice_" + idx + "_" + Math.random().toString(36).substr(2, 5) + "_" + Date.now();
-              }
-            });
-          }
-        });
-      }
-      
-      if (this.project.config.galleryEnabled === undefined) this.project.config.galleryEnabled = false;
-      if (this.project.config.galleryCharactersEnabled === undefined) this.project.config.galleryCharactersEnabled = false;
-      if (this.project.config.galleryBackgroundsEnabled === undefined) this.project.config.galleryBackgroundsEnabled = false;
-      if (this.project.config.musicEnabled === undefined) this.project.config.musicEnabled = false;
-      this.project.unlockables = this.project.unlockables || [];
-      
-      document.getElementById('dashboard-portal').classList.add('hidden');
-      document.getElementById('editor-layout').classList.remove('hidden');
-      
-      this.loadProjectMeta();
-      this.refreshScenesTree();
-      this.populateSceneGroupSelect();
-      this.refreshSettingsTab();
-      this.renderAssetsTab();
-
-      // Select start scene or first scene as default
-      if (this.project.startSceneId && this.project.scenes[this.project.startSceneId]) {
-        this.selectScene(this.project.startSceneId);
-      } else {
-        const sceneIds = Object.keys(this.project.scenes || {});
-        if (sceneIds.length > 0) this.selectScene(sceneIds[0]);
-      }
+      const localRecovery = this.loadLocalRecovery();
+      this.finishProjectLoad(localRecovery || data, localRecovery ? 'Recovered locally' : 'Saved to disk');
 
     } catch (err) {
-      console.error("Editor init failed. running in standalone browser mode.", err);
-      // Initialize a default offline fallback sandbox project
-      this.loadOfflineSandbox();
+      console.error("Editor init failed.", err);
+      const recovered = this.loadLocalRecovery();
+      if (recovered) this.finishProjectLoad(recovered, 'Recovered locally');
+      else this.loadOfflineSandbox(true);
     }
   }
 
-  loadOfflineSandbox() {
+  finishProjectLoad(data, status = 'Saved to disk') {
+    try {
+      this.project = window.VNFairyCore && window.VNFairyCore.migrations
+        ? window.VNFairyCore.migrations.migrateProject(data, { engineVersion: this.version })
+        : data;
+    } catch (error) {
+      if (error.code === 'FUTURE_PROJECT_SCHEMA') {
+        this.showVersionError(data && (data.engineVersion || data.vnFairyVersion || data.schemaVersion), this.version);
+        return false;
+      }
+      throw error;
+    }
+    this.project.id = this.projectId || this.project.id || 'offline-sandbox';
+    this.project.config = this.project.config || {};
+    if (this.project.scenes) {
+      Object.values(this.project.scenes).forEach(scene => {
+        if (scene.choices) {
+          scene.choices.forEach((choice, idx) => {
+            if (!choice.id) choice.id = "choice_" + idx + "_" + Math.random().toString(36).slice(2, 7) + "_" + Date.now();
+          });
+        }
+      });
+    }
+    if (this.project.config.galleryEnabled === undefined) this.project.config.galleryEnabled = false;
+    if (this.project.config.galleryCharactersEnabled === undefined) this.project.config.galleryCharactersEnabled = false;
+    if (this.project.config.galleryBackgroundsEnabled === undefined) this.project.config.galleryBackgroundsEnabled = false;
+    if (this.project.config.musicEnabled === undefined) this.project.config.musicEnabled = false;
+    this.project.unlockables = this.project.unlockables || [];
+
+    document.getElementById('dashboard-portal').classList.add('hidden');
+    document.getElementById('editor-layout').classList.remove('hidden');
+    this.loadProjectMeta();
+    this.refreshScenesTree();
+    this.populateSceneGroupSelect();
+    this.refreshSettingsTab();
+    this.renderAssetsTab();
+    this.populateAssetDropdowns();
+    const selectedScene = this.project.startSceneId && this.project.scenes[this.project.startSceneId]
+      ? this.project.startSceneId
+      : Object.keys(this.project.scenes || {})[0];
+    if (selectedScene) this.selectScene(selectedScene);
+    this.initializeHistory();
+    this.updateSaveStatus(status, status !== 'Saved to disk');
+    return true;
+  }
+
+  localRecoveryKey() {
+    return `vnfairy_editor_recovery_${this.projectId || 'offline-sandbox'}`;
+  }
+
+  loadLocalRecovery() {
+    try {
+      const raw = localStorage.getItem(this.localRecoveryKey()) || localStorage.getItem('vnfairy_sandbox_project');
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      console.warn('Local recovery data could not be read.', err);
+      return null;
+    }
+  }
+
+  loadOfflineSandbox(saveFailed = false) {
     this.project = {
+      artifactType: 'vnfairy-project',
+      schemaVersion: 1,
+      engineVersion: this.version,
+      createdWithVersion: this.version,
       title: "Offline Story Sandbox",
       author: "Game Designer",
       config: {
@@ -328,19 +401,20 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         }
       });
     }
-    this.loadProjectMeta();
-    this.refreshScenesTree();
-    this.refreshSettingsTab();
-    this.selectScene("scene_start");
-    this.updateSaveStatus("Sandbox Offline Mode (Saves in LocalStorage)", true);
+    this.finishProjectLoad(this.project, saveFailed ? 'Save failed' : 'Recovered locally');
   }
 
   // Project auto-save mechanism
   async saveProject(showNotification = false) {
-    this.updateSaveStatus("Saving changes...");
+    if (!this.project) return false;
+    this.updateSaveStatus("Saving…");
     
     // Sync project metadata from inputs
-    this.project.vnFairyVersion = this.version;
+    if (window.VNFairyCore && window.VNFairyCore.migrations) {
+      this.project = window.VNFairyCore.migrations.stampProjectForWrite(this.project, { engineVersion: this.version });
+    } else {
+      this.project.vnFairyVersion = this.version;
+    }
     this.project.title = document.getElementById('project-title-input').value;
     this.project.author = document.getElementById('project-author-input').value;
     this.project.config.kineticMode = document.getElementById('settings-kinetic-mode').checked;
@@ -378,6 +452,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     this.project.config.credits.text = document.getElementById('settings-credits-text').value;
     this.project.config.credits.noShading = document.getElementById('settings-credits-no-shading').checked;
     this.project.config.credits.noDimming = document.getElementById('settings-credits-no-dimming').checked;
+    this.captureHistoryChange();
 
     try {
       let saveUrl = '/api/project';
@@ -389,18 +464,28 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.project)
       });
-      if (!response.ok) throw new Error("Save API error");
-      this.updateSaveStatus("All changes saved");
-      if (showNotification) this.showToast("Project saved!");
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.error || "Save API error");
+      localStorage.removeItem(this.localRecoveryKey());
+      this.updateSaveStatus("Saved to disk");
+      if (showNotification) this.showToast("Saved to disk");
+      return true;
     } catch (err) {
-      console.warn("Could not save to disk, saving to local storage instead.", err);
-      localStorage.setItem('vnfairy_sandbox_project', JSON.stringify(this.project));
-      this.updateSaveStatus("Saved to Browser (Offline)", true);
+      console.warn("Could not save to disk; retaining a local recovery copy.", err);
+      try {
+        localStorage.setItem(this.localRecoveryKey(), JSON.stringify(this.project));
+        this.updateSaveStatus("Recovered locally", true);
+      } catch (storageError) {
+        console.error("Local recovery also failed.", storageError);
+        this.updateSaveStatus("Save failed", true);
+      }
+      return false;
     }
   }
 
   // Set timeout to delay save after keystrokes (debouncing)
   triggerAutoSave() {
+    this.captureHistoryChange();
     this.updateSaveStatus("Unsaved changes...");
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
     this.saveTimeout = setTimeout(() => { this.saveProject(); }, 1500);
@@ -408,8 +493,93 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   updateSaveStatus(statusText, warning = false) {
     const statusElem = document.getElementById('save-status');
+    if (!statusElem) return;
     statusElem.innerText = statusText;
     statusElem.style.color = warning ? "var(--warning)" : "var(--text-muted)";
+    statusElem.dataset.state = statusText.toLowerCase().replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  initializeHistory() {
+    this.undoStack = [];
+    this.redoStack = [];
+    this.historyState = this.project ? JSON.stringify(this.project) : null;
+    this.historyContext = null;
+    this.historyCapturedAt = 0;
+    this.updateHistoryButtons();
+  }
+
+  captureHistoryChange() {
+    if (!this.project || this.isApplyingHistory) return;
+    const currentState = JSON.stringify(this.project);
+    if (!this.historyState) {
+      this.historyState = currentState;
+      return;
+    }
+    if (currentState === this.historyState) return;
+
+    const activeElement = document.activeElement;
+    const context = `${this.activeSceneId || ''}:${this.activeStepIndex ?? ''}:${activeElement && activeElement.id || ''}`;
+    const now = Date.now();
+    const shouldCoalesce = context === this.historyContext && now - this.historyCapturedAt < 750;
+    if (!shouldCoalesce) {
+      this.undoStack.push(this.historyState);
+      if (this.undoStack.length > this.historyLimit) this.undoStack.shift();
+    }
+    this.historyState = currentState;
+    this.historyContext = context;
+    this.historyCapturedAt = now;
+    this.redoStack = [];
+    this.updateHistoryButtons();
+  }
+
+  undo() {
+    if (!this.project || !this.undoStack.length) return;
+    this.redoStack.push(JSON.stringify(this.project));
+    this.applyHistoryState(this.undoStack.pop(), 'Undo applied');
+  }
+
+  redo() {
+    if (!this.project || !this.redoStack.length) return;
+    this.undoStack.push(JSON.stringify(this.project));
+    this.applyHistoryState(this.redoStack.pop(), 'Redo applied');
+  }
+
+  applyHistoryState(serializedState, message) {
+    const previousSceneId = this.activeSceneId;
+    const previousStepIndex = this.activeStepIndex;
+    this.isApplyingHistory = true;
+    try {
+      this.project = JSON.parse(serializedState);
+      this.historyState = serializedState;
+      this.historyContext = null;
+      this.loadProjectMeta();
+      this.refreshScenesTree();
+      this.populateSceneGroupSelect();
+      this.refreshSettingsTab();
+      this.renderAssetsTab();
+      const sceneId = this.project.scenes[previousSceneId]
+        ? previousSceneId
+        : (this.project.startSceneId || Object.keys(this.project.scenes || {})[0]);
+      if (sceneId) {
+        this.selectScene(sceneId);
+        const dialogue = this.project.scenes[sceneId].dialogue || [];
+        if (dialogue.length) this.selectDialogueStep(Math.min(previousStepIndex || 0, dialogue.length - 1));
+      }
+      this.updateSaveStatus('Unsaved changes...');
+      this.showToast(message);
+    } finally {
+      this.isApplyingHistory = false;
+      this.updateHistoryButtons();
+    }
+    if (this.saveTimeout) clearTimeout(this.saveTimeout);
+    this.saveTimeout = setTimeout(() => this.saveProject(), 500);
+  }
+
+  updateHistoryButtons() {
+    const undoButton = document.getElementById('btn-undo');
+    const redoButton = document.getElementById('btn-redo');
+    if (undoButton) undoButton.disabled = this.undoStack.length === 0;
+    if (redoButton) redoButton.disabled = this.redoStack.length === 0;
   }
 
   // Load project name/author headers
@@ -424,9 +594,10 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       const response = await fetch(`/api/assets?project=${this.projectId || 'demo'}`);
       if (!response.ok) throw new Error("Could not load assets");
       this.assets = await response.json();
+      this.assetMetadata = this.assets.metadata || {};
       
       this.renderAssetsTab();
-      this.populateAssetDropdowns();
+      if (this.project) this.populateAssetDropdowns();
 
       // If universal select modal is active, refresh its list too
       const modal = document.getElementById('universal-select-modal');
@@ -436,12 +607,91 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         this.renderUniversalSelectModalList(filter);
       }
     } catch (e) {
-      console.warn("Could not fetch server assets. Asset upload disabled offline.");
+      console.warn("Could not fetch server assets. Asset upload disabled offline.", e);
     }
   }
 
   // Render lists in the Sidebar Assets tab
   renderAssetsTab() {
+    if (!this.project) return;
+    this.ensureAssetLibrary();
+    this.refreshAssetFolderFilter();
+    const types = ['bg', 'char', 'music', 'sound', 'video'];
+    const unused = types.reduce((count, type) => count + this.getAssetRecords(type).filter(record => !(record.metadata.usageCount || 0)).length, 0);
+    const summary = document.getElementById('asset-manager-summary');
+    const sidebarSummary = document.getElementById('asset-sidebar-summary');
+    const unusedSummary = document.getElementById('asset-manager-unused-summary');
+    if (unusedSummary) unusedSummary.textContent = unused ? `${unused} unused asset${unused === 1 ? '' : 's'} · unused assets are marked below` : 'All uploaded assets are in use';
+    const counts = {
+      bg: this.getAssetFilenames('bg').length,
+      char: this.getAssetFilenames('char').length + (this.project.assets.characters || []).length,
+      music: this.getAssetFilenames('music').length,
+      sound: this.getAssetFilenames('sound').length,
+      video: this.getAssetFilenames('video').length
+    };
+    const managedTotal = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    if (summary) summary.textContent = `${managedTotal} asset${managedTotal === 1 ? '' : 's'}`;
+    if (sidebarSummary) sidebarSummary.textContent = `${managedTotal} asset${managedTotal === 1 ? '' : 's'} across ${Object.values(counts).filter(Boolean).length} categories`;
+    Object.entries(counts).forEach(([type, count]) => {
+      const badge = document.getElementById(`asset-count-${type}`);
+      if (badge) badge.textContent = count;
+      const sidebarBadge = document.getElementById(`asset-sidebar-count-${type}`);
+      if (sidebarBadge) sidebarBadge.textContent = count;
+    });
+
+    const queries = {};
+    types.forEach(type => { queries[type] = (document.getElementById(`search-asset-${type}`)?.value || '').toLowerCase().trim(); });
+    this.renderAssetFileList('bg', document.getElementById('asset-bg-list'), queries.bg, record => this.renderImageAssetCard('bg', record));
+    this.renderAssetFileList('music', document.getElementById('asset-music-list'), queries.music, record => this.renderAudioAssetItem('music', record));
+    this.renderAssetFileList('sound', document.getElementById('asset-sound-list'), queries.sound, record => this.renderAudioAssetItem('sound', record));
+    this.renderAssetFileList('video', document.getElementById('asset-video-list'), queries.video, record => this.renderAudioAssetItem('video', record));
+
+    const charAssetList = document.getElementById('asset-char-list');
+    if (charAssetList) {
+      charAssetList.innerHTML = '';
+      const spriteHeading = document.createElement('div');
+      spriteHeading.className = 'asset-subsection-heading';
+      spriteHeading.textContent = 'Sprite files';
+      charAssetList.appendChild(spriteHeading);
+      const spriteGrid = document.createElement('div');
+      spriteGrid.className = 'asset-grid';
+      this.getAssetRecords('char').filter(record => this.assetMatches('char', record, queries.char)).forEach(record => spriteGrid.appendChild(this.renderImageAssetCard('char', record)));
+      if (!spriteGrid.children.length) spriteGrid.innerHTML = '<div class="muted asset-empty-state">No matching sprite files.</div>';
+      charAssetList.appendChild(spriteGrid);
+      const characterHeading = document.createElement('div');
+      characterHeading.className = 'asset-subsection-heading';
+      characterHeading.textContent = 'Characters and default expressions';
+      charAssetList.appendChild(characterHeading);
+      const projectChars = this.project.assets.characters || [];
+      projectChars.filter(char => !queries.char || String(char.name || char.id).toLowerCase().includes(queries.char)).forEach(char => {
+        const div = document.createElement('div');
+        div.className = 'char-asset-item';
+        const header = document.createElement('div');
+        header.className = 'char-asset-header';
+        header.innerHTML = `<span class="asset-name" style="color:${this.escapeHtml(char.color || '#fff')}"><span class="asset-type-badge">Character</span>${this.escapeHtml(char.name || char.id)}<span class="muted">Default: ${this.escapeHtml(char.defaultExpression || (char.sprites || [])[0]?.id || 'none')}</span></span>`;
+        const actions = document.createElement('div');
+        actions.innerHTML = '<button type="button" class="scene-action-btn">Edit</button><button type="button" class="scene-action-btn btn-danger-text">Delete</button>';
+        actions.children[0].onclick = () => this.openCharacterModal(char.id);
+        actions.children[1].onclick = () => this.deleteCharacter(char.id);
+        header.appendChild(actions);
+        div.appendChild(header);
+        const sprites = document.createElement('div');
+        sprites.className = 'char-sprites-grid';
+        (char.sprites || []).forEach(sprite => {
+          const spriteCard = document.createElement('div');
+          spriteCard.className = 'char-sprite-card';
+          spriteCard.title = `${sprite.name || sprite.id}${sprite.id === char.defaultExpression ? ' · default' : ''}`;
+          spriteCard.innerHTML = `<img src="${this.escapeHtml(sprite.path || '')}" alt="${this.escapeHtml(sprite.name || sprite.id)}">`;
+          sprites.appendChild(spriteCard);
+        });
+        div.appendChild(sprites);
+        charAssetList.appendChild(div);
+      });
+    }
+    this.renderAssetSidebarOverview();
+    this.updateAssetSelectionUI();
+    return;
+
     // Search queries
     const bgQuery = (document.getElementById('search-asset-bg')?.value || "").toLowerCase().trim();
     const charQuery = (document.getElementById('search-asset-char')?.value || "").toLowerCase().trim();
@@ -489,7 +739,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
       div.innerHTML = `
         <div class="char-asset-header">
-          <span style="color:${char.color || '#fff'}">👤 ${char.name}</span>
+          <span class="asset-name" style="color:${char.color || '#fff'}"><span class="asset-type-badge">Character</span>${char.name}</span>
           <div style="display:flex; gap:6px;">
             <button class="scene-action-btn" onclick="window.editor.openCharacterModal('${char.id}')">Edit</button>
             <button class="scene-action-btn btn-danger-text" onclick="window.editor.deleteCharacter('${char.id}')">Delete</button>
@@ -514,7 +764,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       item.style.justifyContent = "space-between";
       item.style.alignItems = "center";
       item.innerHTML = `
-        <span>🎵 ${file}</span>
+        <span class="asset-name"><span class="asset-type-badge">Music</span>${file}</span>
         <button class="scene-action-btn btn-danger-text" style="font-weight:bold; font-size:1.1rem; padding: 0 6px;" onclick="window.editor.deleteAsset('music', '${file}', event)" title="Delete Music">&times;</button>
       `;
       musicList.appendChild(item);
@@ -533,7 +783,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         item.style.justifyContent = "space-between";
         item.style.alignItems = "center";
         item.innerHTML = `
-          <span>🗣️ ${file}</span>
+          <span class="asset-name"><span class="asset-type-badge">Voice</span>${file}</span>
           <button class="scene-action-btn btn-danger-text" style="font-weight:bold; font-size:1.1rem; padding: 0 6px;" onclick="window.editor.deleteAsset('sound', '${file}', event)" title="Delete Voice Clip">&times;</button>
         `;
         soundList.appendChild(item);
@@ -553,7 +803,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         item.style.justifyContent = "space-between";
         item.style.alignItems = "center";
         item.innerHTML = `
-          <span>🎥 ${file}</span>
+          <span class="asset-name"><span class="asset-type-badge">Video</span>${file}</span>
           <button class="scene-action-btn btn-danger-text" style="font-weight:bold; font-size:1.1rem; padding: 0 6px;" onclick="window.editor.deleteAsset('video', '${file}', event)" title="Delete Video">&times;</button>
         `;
         videoList.appendChild(item);
@@ -567,39 +817,48 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     if (!confirm(`Are you sure you want to delete this ${assetTypeName} file? This will physically delete the file from the project's folder.`)) return;
 
     try {
-      const response = await fetch('/api/asset/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: type,
-          filename: filename,
-          project: this.projectId || 'demo'
-        })
-      });
-      const res = await response.json();
-      if (!res.success) throw new Error(res.error);
-
+      await this.deleteAssetFile(type, filename);
       this.showToast("Deleted successfully!");
-
-      // Update local asset configuration registry
-      if (this.project && this.project.assets) {
-        const id = filename.replace(/\.[^/.]+$/, "");
-        if (type === 'bg' && this.project.assets.backgrounds) {
-          this.project.assets.backgrounds = this.project.assets.backgrounds.filter(b => b.id !== id);
-        } else if (type === 'music' && this.project.assets.music) {
-          this.project.assets.music = this.project.assets.music.filter(m => m.id !== id);
-        } else if (type === 'sound' && this.project.assets.sound) {
-          this.project.assets.sound = this.project.assets.sound.filter(s => s.id !== id);
-        } else if (type === 'video' && this.project.assets.video) {
-          this.project.assets.video = this.project.assets.video.filter(v => v.id !== id);
-        }
-      }
-
+      this.selectedAssetKeys.delete(`${type}:${filename}`);
       await this.refreshAssets();
       this.saveProject();
     } catch (e) {
       alert("Delete failed: " + e.message);
     }
+  }
+
+  async deleteAssetFile(type, filename) {
+    const response = await fetch('/api/asset/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, filename, project: this.projectId || 'demo' })
+    });
+    const res = await response.json();
+    if (!res.success) throw new Error(res.error);
+    if (this.project && this.project.assets) {
+      const id = filename.replace(/\.[^/.]+$/, "");
+      const registryKey = type === 'bg' ? 'backgrounds' : type === 'music' ? 'music' : type === 'sound' ? 'sound' : type === 'video' ? 'video' : null;
+      if (registryKey && this.project.assets[registryKey]) this.project.assets[registryKey] = this.project.assets[registryKey].filter(item => item.id !== id);
+      if (this.project.assets.library && this.project.assets.library.items) delete this.project.assets.library.items[`${type}:${filename}`];
+    }
+  }
+
+  async deleteSelectedAssets() {
+    const keys = [...this.selectedAssetKeys];
+    if (!keys.length || !confirm(`Delete ${keys.length} selected asset${keys.length === 1 ? '' : 's'}? Files will be removed from the project folder.`)) return;
+    const failures = [];
+    for (const key of keys) {
+      const splitAt = key.indexOf(':');
+      const type = key.slice(0, splitAt);
+      const filename = key.slice(splitAt + 1);
+      try { await this.deleteAssetFile(type, filename); }
+      catch (error) { failures.push(`${filename}: ${error.message}`); }
+    }
+    this.selectedAssetKeys.clear();
+    await this.refreshAssets();
+    await this.saveProject();
+    if (failures.length) alert(`Some assets could not be deleted:\n\n${failures.join('\n')}`);
+    this.showToast(`${keys.length - failures.length} asset${keys.length - failures.length === 1 ? '' : 's'} deleted`);
   }
 
   deleteCharacter(charId) {
@@ -635,8 +894,9 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       if (!select) return;
       const currentVal = select.value;
       
-      // Clear all except first option
-      while (select.options.length > 1) select.remove(1);
+      // Scene backgrounds also keep the built-in solid white option.
+      const defaultLength = select.id === 'scene-bg-select' ? 2 : 1;
+      while (select.options.length > defaultLength) select.remove(defaultLength);
 
       this.assets.bg.forEach(file => {
         // Create background ID
@@ -781,6 +1041,23 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   // Convert uploaded file to Base64 and send to server API
   async handleAssetUpload(file) {
+    if (!file || !this.uploadingAssetType) return;
+    try {
+      await this.uploadFileToServer(file, this.uploadingAssetType);
+      await this.refreshAssets();
+      this.registerUploadedUnlockable(file, this.uploadingAssetType);
+      this.renderAssetsTab();
+      await this.saveProject();
+      this.showToast(`Uploaded ${file.name}`);
+    } catch (error) {
+      alert(`Upload failed: ${error.message}`);
+      this.updateSaveStatus('Save failed', true);
+    } finally {
+      const uploader = document.getElementById('asset-file-uploader');
+      if (uploader) uploader.value = '';
+    }
+    return;
+
     if (!file) return;
     this.updateSaveStatus("Uploading asset...");
 
@@ -844,10 +1121,123 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         this.saveProject();
       } catch (err) {
         alert("Upload failed: " + err.message);
-        this.updateSaveStatus("All changes saved");
+        this.updateSaveStatus("Save failed", true);
       }
     };
     reader.readAsDataURL(file);
+  }
+
+  fileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = event => resolve(event.target.result);
+      reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async uploadFileToServer(file, type) {
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, type, project: this.projectId || 'demo', data: await this.fileAsDataUrl(file) })
+    });
+    const result = await response.json();
+    if (!response.ok || !result.success) throw new Error(result.error || 'Upload rejected by the server');
+    return result;
+  }
+
+  registerUploadedUnlockable(file, type) {
+    if (this.uploadingUnlockableIndex === undefined || this.uploadingUnlockableIndex === null) return;
+    const index = this.uploadingUnlockableIndex;
+    this.uploadingUnlockableIndex = undefined;
+    const projectId = this.projectId || 'demo';
+    const assetPath = `data/projects/${projectId}/assets/${type}/${file.name}`;
+    if (this.project.unlockables && this.project.unlockables[index]) this.project.unlockables[index].path = assetPath;
+    const id = file.name.replace(/\.[^/.]+$/, '');
+    const registryKey = type === 'bg' ? 'backgrounds' : type === 'music' ? 'music' : type === 'sound' ? 'sound' : type === 'video' ? 'video' : null;
+    if (registryKey) {
+      this.project.assets[registryKey] = this.project.assets[registryKey] || [];
+      if (!this.project.assets[registryKey].some(item => item.id === id)) this.project.assets[registryKey].push({ id, name: id.replace(/_/g, ' '), path: assetPath });
+    }
+    this.renderUnlockablesTab();
+  }
+
+  async handleBulkAssetUpload(files) {
+    const type = document.getElementById('asset-bulk-upload-type')?.value || 'bg';
+    const selected = Array.from(files || []);
+    if (!selected.length) return;
+    this.updateSaveStatus('Uploading assets…');
+    const failures = [];
+    for (const file of selected) {
+      try { await this.uploadFileToServer(file, type); }
+      catch (error) { failures.push(`${file.name}: ${error.message}`); }
+    }
+    await this.refreshAssets();
+    await this.saveProject();
+    const uploader = document.getElementById('asset-bulk-uploader');
+    if (uploader) uploader.value = '';
+    if (failures.length) alert(`Some files were rejected:\n\n${failures.join('\n')}`);
+    this.showToast(`${selected.length - failures.length} asset${selected.length - failures.length === 1 ? '' : 's'} uploaded`);
+  }
+
+  renderAssetSidebarOverview() {
+    const panelByType = { bg: 'asset-panel-bg', char: 'asset-panel-char', music: 'asset-panel-music', sound: 'asset-panel-sound', video: 'asset-panel-video' };
+    const emptyLabels = { bg: 'No backgrounds yet', char: 'No characters yet', music: 'No music yet', sound: 'No voice or sound yet', video: 'No videos yet' };
+    Object.keys(panelByType).forEach(type => {
+      const container = document.getElementById(`asset-sidebar-${type}`);
+      if (!container) return;
+      let items = [];
+      if (type === 'char') {
+        const configured = (this.project.assets.characters || []).map(character => ({
+          name: character.name || character.id,
+          detail: 'Character',
+          image: (character.sprites || []).find(sprite => sprite.id === character.defaultExpression)?.path || (character.sprites || [])[0]?.path || ''
+        }));
+        const configuredFiles = new Set(configured.map(item => String(item.image || '').split('/').pop()).filter(Boolean));
+        const looseSprites = this.getAssetRecords('char').filter(record => !configuredFiles.has(record.filename)).map(record => ({ name: record.filename, detail: 'Sprite file', image: this.assetUrl('char', record.filename) }));
+        items = [...configured, ...looseSprites];
+      } else {
+        items = this.getAssetRecords(type).map(record => ({
+          name: record.filename,
+          detail: `${this.formatAssetBytes(record.metadata.size)} · ${record.metadata.usageCount || 0} uses`,
+          image: type === 'bg' ? this.assetUrl(type, record.filename) : ''
+        }));
+      }
+      container.innerHTML = '';
+      items.slice(0, 4).forEach(item => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `asset-sidebar-item${item.image ? ' has-preview' : ''}`;
+        button.innerHTML = item.image
+          ? `<img src="${this.escapeHtml(item.image)}" alt=""><span><strong title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</strong><small>${this.escapeHtml(item.detail)}</small></span>`
+          : `<span class="asset-sidebar-kind" aria-hidden="true">${type === 'music' ? '♪' : type === 'sound' ? 'SFX' : '▶'}</span><span><strong title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</strong><small>${this.escapeHtml(item.detail)}</small></span>`;
+        button.onclick = () => this.openAssetManagement(panelByType[type]);
+        container.appendChild(button);
+      });
+      if (!items.length) container.innerHTML = `<div class="asset-sidebar-empty muted">${emptyLabels[type]}</div>`;
+    });
+    document.querySelectorAll('.asset-sidebar-view-all').forEach(button => {
+      button.onclick = () => this.openAssetManagement(button.dataset.assetPanel);
+    });
+  }
+
+  openAssetManagement(panelId = 'asset-panel-bg') {
+    this.renderAssetsTab();
+    document.getElementById('asset-management-modal')?.classList.remove('hidden');
+    switchManagementTab('asset-management', panelId);
+  }
+
+  openSceneSettings() {
+    if (!this.activeSceneId || !this.project.scenes[this.activeSceneId]) {
+      this.showToast('Select a scene first');
+      return;
+    }
+    const scene = this.project.scenes[this.activeSceneId];
+    const title = document.getElementById('scene-settings-modal-title');
+    if (title) title.textContent = `${scene.name || scene.id} Settings`;
+    document.getElementById('scene-settings-modal')?.classList.remove('hidden');
+    switchManagementTab('scene-settings-management', 'scene-settings-basics');
   }
 
   // Character manager modal
@@ -877,6 +1267,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       (char.sprites || []).forEach(sprite => {
         this.addExpressionRow(sprite.id, sprite.name, sprite.path);
       });
+      this.refreshCharacterDefaultExpressionOptions(char.defaultExpression);
     } else {
       title.innerText = "Create Character";
       nameInput.value = "";
@@ -890,6 +1281,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       
       // Add one default expression row
       this.addExpressionRow('default', 'Default', '');
+      this.refreshCharacterDefaultExpressionOptions('default');
     }
 
     this.setCharPreviewPosition('center');
@@ -922,17 +1314,38 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     `;
 
     row.querySelector('.expr-file-select').onchange = () => this.updateCharModalPreview();
-    row.querySelector('.expr-key-input').oninput = () => this.updateCharModalPreview();
+    row.querySelector('.expr-key-input').oninput = () => { this.refreshCharacterDefaultExpressionOptions(); this.updateCharModalPreview(); };
     row.querySelector('.expr-name-input').oninput = () => this.updateCharModalPreview();
     if (id !== 'default') {
       row.querySelector('.btn-danger').onclick = () => {
         row.remove();
+        this.refreshCharacterDefaultExpressionOptions();
         this.updateCharModalPreview();
       };
     }
     list.appendChild(row);
     this.convertAllAssetSelects();
+    this.refreshCharacterDefaultExpressionOptions();
     this.updateCharModalPreview();
+  }
+
+  refreshCharacterDefaultExpressionOptions(selected = null) {
+    const select = document.getElementById('char-default-expression-select');
+    const list = document.getElementById('char-expressions-editor-list');
+    if (!select || !list) return;
+    const previous = selected !== null ? selected : select.value;
+    const keys = Array.from(list.querySelectorAll('.expr-row-edit')).map(row => ({
+      id: row.querySelector('.expr-key-input')?.value.trim(),
+      name: row.querySelector('.expr-name-input')?.value.trim()
+    })).filter(item => item.id);
+    select.innerHTML = '<option value="">Use first expression</option>';
+    keys.forEach(item => {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = item.name || item.id;
+      select.appendChild(option);
+    });
+    select.value = keys.some(item => item.id === previous) ? previous : (keys[0]?.id || '');
   }
 
   saveCharacter() {
@@ -971,11 +1384,11 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       // Update existing
       const idx = this.project.assets.characters.findIndex(c => c.id === charId);
       if (idx !== -1) {
-        this.project.assets.characters[idx] = { id: charId, name, color, nonvisual: isNonVisual, scale, sprites };
+        this.project.assets.characters[idx] = { id: charId, name, color, nonvisual: isNonVisual, scale, sprites, defaultExpression };
       }
     } else {
       // Create new
-      this.project.assets.characters.push({ id: charId, name, color, nonvisual: isNonVisual, scale, sprites });
+      this.project.assets.characters.push({ id: charId, name, color, nonvisual: isNonVisual, scale, sprites, defaultExpression });
     }
 
     closeModal('char-modal');
@@ -1126,6 +1539,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
       const item = document.createElement('div');
       item.className = `scene-item ${this.activeSceneId === id ? 'active' : ''}`;
+      item.dataset.sceneId = id;
       item.onclick = (e) => {
         if (!e.target.classList.contains('scene-action-btn') && !e.target.closest('.scene-item-actions')) {
           this.selectScene(id);
@@ -1138,12 +1552,18 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       const canMoveUp = indexInList > 0;
       const canMoveDown = indexInList < listLength - 1;
 
+      const sceneStatus = scene.status || 'draft';
+      const sceneTags = Array.isArray(scene.tags) ? scene.tags : [];
       item.innerHTML = `
-        <span class="scene-item-title" title="${scene.name || id}">🎬 ${scene.name || id}${isStart}</span>
+        <div class="scene-item-copy">
+          <span class="scene-item-title" title="${this.escapeHtml(scene.name || id)}">${this.escapeHtml(scene.name || id)}${isStart}</span>
+          <span class="scene-item-meta"><span class="scene-status-badge ${sceneStatus}">${this.escapeHtml(sceneStatus)}</span>${scene.bookmarked ? '<span class="scene-bookmark-mark" title="Bookmarked">★</span>' : ''}${sceneTags.length ? `<span>${this.escapeHtml(sceneTags.slice(0, 2).join(' · '))}</span>` : ''}</span>
+        </div>
         <div class="scene-item-actions">
           <button class="scene-action-btn move-up" onclick="event.stopPropagation(); window.editor.moveScene('${id}', -1)" title="Move Up" ${canMoveUp ? '' : 'style="opacity:0.2; pointer-events:none;"'}>↑</button>
           <button class="scene-action-btn move-down" onclick="event.stopPropagation(); window.editor.moveScene('${id}', 1)" title="Move Down" ${canMoveDown ? '' : 'style="opacity:0.2; pointer-events:none;"'}>↓</button>
-          <button class="scene-action-btn delete" onclick="event.stopPropagation(); window.editor.deleteScene('${id}')" title="Delete Scene">🗑️</button>
+          <button class="scene-action-btn" onclick="event.stopPropagation(); window.editor.duplicateScene('${id}')" title="Duplicate Scene">＋</button>
+          <button class="scene-action-btn delete" onclick="event.stopPropagation(); window.editor.deleteScene('${id}')" title="Delete Scene">×</button>
         </div>
       `;
       return item;
@@ -1163,14 +1583,14 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       header.innerHTML = `
         <div class="scene-group-title" onclick="window.editor.toggleGroup('${group.id}')">
           <span class="group-arrow">${isCollapsed ? '▶' : '▼'}</span>
-          <span class="group-folder">📁</span>
+          <span class="group-folder">Group</span>
           <span class="group-name-text" title="${group.name}">${group.name}</span>
         </div>
         <div class="group-actions">
           <button class="scene-action-btn move-up" onclick="event.stopPropagation(); window.editor.moveGroup('${group.id}', -1)" title="Move Group Up" ${canGroupMoveUp ? '' : 'style="opacity:0.2; pointer-events:none;"'}>↑</button>
           <button class="scene-action-btn move-down" onclick="event.stopPropagation(); window.editor.moveGroup('${group.id}', 1)" title="Move Group Down" ${canGroupMoveDown ? '' : 'style="opacity:0.2; pointer-events:none;"'}>↓</button>
-          <button class="scene-action-btn" onclick="window.editor.renameGroup('${group.id}', event)" title="Rename Group">✏️</button>
-          <button class="scene-action-btn" onclick="window.editor.deleteGroup('${group.id}', event)" title="Delete Group">🗑️</button>
+          <button class="scene-action-btn" onclick="window.editor.renameGroup('${group.id}', event)" title="Rename Group">Edit</button>
+          <button class="scene-action-btn" onclick="window.editor.deleteGroup('${group.id}', event)" title="Delete Group">×</button>
         </div>
       `;
 
@@ -1221,6 +1641,193 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         list.appendChild(item);
       }
     });
+    const managementModal = document.getElementById('scene-management-modal');
+    if (managementModal && !managementModal.classList.contains('hidden')) this.renderSceneManagement();
+  }
+
+  openSceneManagement() {
+    this.renderSceneManagement();
+    document.getElementById('scene-management-modal')?.classList.remove('hidden');
+  }
+
+  getSceneGroupId(sceneId) {
+    const group = (this.project.sceneGroups || []).find(item => (item.sceneIds || []).includes(sceneId));
+    return group ? group.id : '';
+  }
+
+  refreshSceneManagementGroupOptions() {
+    const groups = this.project.sceneGroups || [];
+    const configurations = [
+      ['scene-management-group-filter', '<option value="">All groups</option><option value="ungrouped">Ungrouped</option>'],
+      ['scene-bulk-group', '<option value="">Move to group…</option><option value="ungrouped">No group</option>']
+    ];
+    configurations.forEach(([id, initial]) => {
+      const select = document.getElementById(id);
+      if (!select) return;
+      const current = select.value;
+      select.innerHTML = initial;
+      groups.forEach(group => {
+        const option = document.createElement('option');
+        option.value = group.id;
+        option.textContent = group.name;
+        select.appendChild(option);
+      });
+      if ([...select.options].some(option => option.value === current)) select.value = current;
+    });
+  }
+
+  renderSceneManagement() {
+    if (!this.project) return;
+    this.project.sceneGroups = this.project.sceneGroups || [];
+    this.refreshSceneManagementGroupOptions();
+    const list = document.getElementById('scene-management-list');
+    if (!list) return;
+    const query = (document.getElementById('scene-management-search')?.value || '').toLowerCase().trim();
+    const statusFilter = document.getElementById('scene-management-status-filter')?.value || '';
+    const groupFilter = document.getElementById('scene-management-group-filter')?.value || '';
+    const scenes = Object.values(this.project.scenes || {}).filter(scene => {
+      const tags = Array.isArray(scene.tags) ? scene.tags.join(' ') : '';
+      const matchesQuery = !query || `${scene.name || ''} ${scene.id || ''} ${tags}`.toLowerCase().includes(query);
+      const matchesStatus = !statusFilter || (scene.status || 'draft') === statusFilter;
+      const groupId = this.getSceneGroupId(scene.id);
+      const matchesGroup = !groupFilter || (groupFilter === 'ungrouped' ? !groupId : groupId === groupFilter);
+      return matchesQuery && matchesStatus && matchesGroup;
+    });
+    const summary = document.getElementById('scene-management-summary');
+    if (summary) summary.textContent = `${scenes.length} of ${Object.keys(this.project.scenes || {}).length} scenes shown`;
+    list.innerHTML = '';
+    scenes.forEach(scene => {
+      const groupId = this.getSceneGroupId(scene.id);
+      const groupName = this.project.sceneGroups.find(group => group.id === groupId)?.name || 'Ungrouped';
+      const row = document.createElement('article');
+      row.className = `scene-management-row${scene.id === this.activeSceneId ? ' is-active' : ''}${this.selectedSceneIds.has(scene.id) ? ' is-selected' : ''}`;
+      row.dataset.sceneId = scene.id;
+      row.innerHTML = `<label class="management-select"><input type="checkbox" aria-label="Select ${this.escapeHtml(scene.name || scene.id)}" ${this.selectedSceneIds.has(scene.id) ? 'checked' : ''}><span></span></label><div class="scene-management-copy"><div><strong>${this.escapeHtml(scene.name || scene.id)}</strong>${scene.id === this.project.startSceneId ? '<span class="scene-start-badge">Start</span>' : ''}${scene.bookmarked ? '<span class="scene-bookmark-mark">★</span>' : ''}</div><span class="muted">${this.escapeHtml(scene.id)} · ${this.escapeHtml(groupName)}</span></div><span class="scene-status-badge ${this.escapeHtml(scene.status || 'draft')}">${this.escapeHtml(scene.status || 'draft')}</span><div class="scene-management-stats"><span>${(scene.dialogue || []).length} lines</span><span>${(scene.choices || []).length} choices</span></div><div class="scene-management-actions"><button type="button" class="btn-secondary" data-action="open">Open</button><button type="button" class="btn-secondary" data-action="settings">Settings</button><button type="button" class="btn-secondary" data-action="duplicate">Duplicate</button><button type="button" class="btn-danger" data-action="delete" ${scene.id === this.project.startSceneId ? 'disabled title="Change the start scene before deleting"' : ''}>Delete</button></div>`;
+      row.querySelector('input').onchange = event => this.setSceneSelected(scene.id, event.target.checked);
+      row.querySelector('[data-action="open"]').onclick = () => { this.selectScene(scene.id); closeModal('scene-management-modal'); switchWorkspaceView('timeline-view'); };
+      row.querySelector('[data-action="settings"]').onclick = () => { this.selectScene(scene.id); closeModal('scene-management-modal'); this.openSceneSettings(); };
+      row.querySelector('[data-action="duplicate"]').onclick = () => this.duplicateScene(scene.id);
+      row.querySelector('[data-action="delete"]').onclick = () => this.deleteScene(scene.id);
+      list.appendChild(row);
+    });
+    if (!scenes.length) list.innerHTML = '<div class="management-empty-state"><strong>No scenes found</strong><span class="muted">Adjust the search or filters to see more scenes.</span></div>';
+    this.renderSceneGroupManagement();
+    this.updateSceneSelectionUI();
+  }
+
+  renderSceneGroupManagement() {
+    const list = document.getElementById('scene-group-management-list');
+    if (!list) return;
+    list.innerHTML = '';
+    (this.project.sceneGroups || []).forEach((group, index, groups) => {
+      const row = document.createElement('article');
+      row.className = 'scene-group-management-row';
+      row.innerHTML = `<div><span class="group-folder">Group</span><strong>${this.escapeHtml(group.name)}</strong><span class="muted">${(group.sceneIds || []).filter(id => this.project.scenes[id]).length} scenes</span></div><div><button type="button" class="btn-secondary" data-action="up" ${index === 0 ? 'disabled' : ''}>Up</button><button type="button" class="btn-secondary" data-action="down" ${index === groups.length - 1 ? 'disabled' : ''}>Down</button><button type="button" class="btn-secondary" data-action="rename">Rename</button><button type="button" class="btn-danger" data-action="delete">Delete group</button></div>`;
+      row.querySelector('[data-action="up"]').onclick = () => this.moveGroup(group.id, -1);
+      row.querySelector('[data-action="down"]').onclick = () => this.moveGroup(group.id, 1);
+      row.querySelector('[data-action="rename"]').onclick = event => this.renameGroup(group.id, event);
+      row.querySelector('[data-action="delete"]').onclick = event => this.deleteGroup(group.id, event);
+      list.appendChild(row);
+    });
+    const ungroupedCount = (this.project.ungroupedSceneIds || []).filter(id => this.project.scenes[id]).length;
+    const ungrouped = document.createElement('article');
+    ungrouped.className = 'scene-group-management-row is-system';
+    ungrouped.innerHTML = `<div><span class="group-folder">System</span><strong>Ungrouped</strong><span class="muted">${ungroupedCount} scenes</span></div><span class="muted">Scenes not assigned to a group</span>`;
+    list.appendChild(ungrouped);
+  }
+
+  setSceneSelected(sceneId, selected) {
+    if (selected) this.selectedSceneIds.add(sceneId);
+    else this.selectedSceneIds.delete(sceneId);
+    this.updateSceneSelectionUI();
+  }
+
+  updateSceneSelectionUI() {
+    const label = document.getElementById('scene-selection-count');
+    if (label) label.textContent = `${this.selectedSceneIds.size} selected`;
+    document.querySelectorAll('.scene-management-row').forEach(row => row.classList.toggle('is-selected', this.selectedSceneIds.has(row.dataset.sceneId)));
+  }
+
+  selectVisibleScenes() {
+    document.querySelectorAll('#scene-management-list .scene-management-row').forEach(row => this.selectedSceneIds.add(row.dataset.sceneId));
+    this.renderSceneManagement();
+  }
+
+  clearSceneSelection() {
+    this.selectedSceneIds.clear();
+    this.renderSceneManagement();
+  }
+
+  assignSceneToGroup(sceneId, groupId) {
+    this.project.sceneGroups.forEach(group => { group.sceneIds = (group.sceneIds || []).filter(id => id !== sceneId); });
+    this.project.ungroupedSceneIds = (this.project.ungroupedSceneIds || []).filter(id => id !== sceneId);
+    const target = this.project.sceneGroups.find(group => group.id === groupId);
+    if (target) target.sceneIds.push(sceneId);
+    else this.project.ungroupedSceneIds.push(sceneId);
+  }
+
+  applyBulkSceneGroup() {
+    const value = document.getElementById('scene-bulk-group')?.value;
+    if (!value || !this.selectedSceneIds.size) return;
+    this.selectedSceneIds.forEach(id => this.assignSceneToGroup(id, value === 'ungrouped' ? '' : value));
+    this.refreshScenesTree();
+    this.populateSceneGroupSelect();
+    this.saveProject(true);
+    this.showToast(`Moved ${this.selectedSceneIds.size} scenes`);
+  }
+
+  applyBulkSceneStatus() {
+    const status = document.getElementById('scene-bulk-status')?.value;
+    if (!status || !this.selectedSceneIds.size) return;
+    this.selectedSceneIds.forEach(id => { if (this.project.scenes[id]) this.project.scenes[id].status = status; });
+    this.refreshScenesTree();
+    this.saveProject(true);
+    this.showToast(`Updated ${this.selectedSceneIds.size} scenes`);
+  }
+
+  deleteSelectedScenes() {
+    const protectedIds = [...this.selectedSceneIds].filter(id => id === this.project.startSceneId);
+    const deletable = [...this.selectedSceneIds].filter(id => id !== this.project.startSceneId && this.project.scenes[id]);
+    if (!deletable.length) {
+      if (protectedIds.length) this.showToast('The start scene cannot be deleted');
+      return;
+    }
+    if (!confirm(`Delete ${deletable.length} selected scene${deletable.length === 1 ? '' : 's'}? This cannot be undone after saving.`)) return;
+    deletable.forEach(id => {
+      this.project.sceneGroups.forEach(group => { group.sceneIds = (group.sceneIds || []).filter(sceneId => sceneId !== id); });
+      this.project.ungroupedSceneIds = (this.project.ungroupedSceneIds || []).filter(sceneId => sceneId !== id);
+      delete this.project.scenes[id];
+      this.selectedSceneIds.delete(id);
+    });
+    if (!this.project.scenes[this.activeSceneId]) this.selectScene(Object.keys(this.project.scenes)[0] || null);
+    else this.refreshScenesTree();
+    this.refreshSettingsTab();
+    this.saveProject(true);
+    this.renderSceneManagement();
+  }
+
+  duplicateScene(sceneId) {
+    const source = this.project.scenes[sceneId];
+    if (!source) return;
+    let copyId = `${sceneId}_copy`;
+    let suffix = 2;
+    while (this.project.scenes[copyId]) copyId = `${sceneId}_copy_${suffix++}`;
+    const copy = JSON.parse(JSON.stringify(source));
+    copy.id = copyId;
+    copy.name = `${source.name || sceneId} Copy`;
+    this.project.scenes[copyId] = copy;
+    const groupId = this.getSceneGroupId(sceneId);
+    if (groupId) {
+      const ids = this.project.sceneGroups.find(group => group.id === groupId).sceneIds;
+      ids.splice(ids.indexOf(sceneId) + 1, 0, copyId);
+    } else {
+      const index = this.project.ungroupedSceneIds.indexOf(sceneId);
+      this.project.ungroupedSceneIds.splice(index + 1, 0, copyId);
+    }
+    this.refreshScenesTree();
+    this.refreshSettingsTab();
+    this.saveProject(true);
+    this.showToast('Scene duplicated');
   }
 
   // Scene CRUD
@@ -1462,6 +2069,10 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     editor.classList.remove('hidden');
 
     const scene = this.project.scenes[sceneId];
+    const contextName = document.getElementById('scene-context-name');
+    if (contextName) contextName.textContent = scene.name || scene.id;
+    const settingsTitle = document.getElementById('scene-settings-modal-title');
+    if (settingsTitle) settingsTitle.textContent = `${scene.name || scene.id} Settings`;
 
     // Load metadata inputs
     document.getElementById('scene-id-input').value = scene.id;
@@ -1712,7 +2323,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       card.className = `dialogue-card-editor glass-panel ${this.activeStepIndex === index ? 'active' : ''}`;
       card.onclick = (e) => {
         // Don't deselect if clicking inside textarea or selects
-        if (e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'SELECT' && !e.target.classList.contains('card-action-btn')) {
+        if (e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'SELECT' && !e.target.closest('.custom-select-wrapper') && !e.target.classList.contains('card-action-btn')) {
           this.selectDialogueStep(index);
         }
       };
@@ -1721,7 +2332,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       let speakerSelectOptions = `<option value="narrator">Narrator</option>`;
       (this.project.assets.characters || []).forEach(char => {
         const isSel = step.speaker === char.id ? "selected" : "";
-        speakerSelectOptions += `<option value="${char.id}" ${isSel}>👤 ${char.name}</option>`;
+        speakerSelectOptions += `<option value="${char.id}" ${isSel}>${char.name}</option>`;
       });
 
       let durationRowHtml = "";
@@ -1739,7 +2350,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         <div class="card-header-row">
           <div class="card-index-speaker">
             <span class="card-index">#${index + 1}</span>
-            <select class="select-input card-speaker-select" onchange="window.editor.updateStepSpeaker(${index}, this.value)">
+            <select class="select-input card-speaker-select" data-asset-type="speaker" onchange="window.editor.updateStepSpeaker(${index}, this.value)">
               ${speakerSelectOptions}
             </select>
           </div>
@@ -1860,7 +2471,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       exprSelect.appendChild(opt);
     });
 
-    exprSelect.value = activeExprId || "";
+    exprSelect.value = activeExprId || char.defaultExpression || (char.sprites[0] && char.sprites[0].id) || "";
     this.syncCustomPicker(exprSelect);
   }
 
@@ -1901,7 +2512,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
     if (characterId) {
       const char = this.project.assets.characters.find(c => c.id === characterId);
-      const defaultSpriteId = (char && char.sprites && char.sprites.length > 0) ? char.sprites[0].id : "";
+      const defaultSpriteId = char ? (char.defaultExpression || (char.sprites && char.sprites.length > 0 ? char.sprites[0].id : "")) : "";
       
       step.layout[pos] = {
         characterId: characterId,
@@ -2007,6 +2618,35 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     this.triggerAutoSave();
   }
 
+  applyPreviewTheme(stageElem) {
+    if (!stageElem) return false;
+    const isLightTheme = this.project && this.project.config && this.project.config.theme === 'light';
+    stageElem.classList.toggle('novel-theme-light', isLightTheme);
+    stageElem.classList.toggle('novel-theme-dark', !isLightTheme);
+    return isLightTheme;
+  }
+
+  applyPreviewBackground(bgElem, scene, isLightTheme) {
+    if (!bgElem) return;
+    bgElem.style.backgroundColor = 'transparent';
+    if (scene && scene.background === '__solid_white__') {
+      bgElem.style.backgroundImage = 'none';
+      bgElem.style.backgroundColor = '#ffffff';
+      return;
+    }
+
+    let bgSrc = '';
+    if (scene && scene.background) {
+      const asset = (this.project.assets.backgrounds || []).find(background => background.id === scene.background);
+      if (asset) bgSrc = asset.path;
+    }
+    bgElem.style.backgroundImage = bgSrc
+      ? `url('${bgSrc}')`
+      : isLightTheme
+        ? 'linear-gradient(135deg, #ffffff, #e8edf4)'
+        : 'linear-gradient(135deg, #1e293b, #0f172a)';
+  }
+
   // Stage Preview drawing
   renderPreview(step) {
     const bgElem = document.getElementById('mini-bg-preview');
@@ -2020,6 +2660,8 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     };
 
     const scene = this.activeSceneId ? this.project.scenes[this.activeSceneId] : null;
+    const stageElem = bgElem ? bgElem.closest('.mini-stage-mockup') : null;
+    const isLightTheme = this.applyPreviewTheme(stageElem);
     if (textElem) {
       if (scene && scene.fontFamily && scene.fontFamily.includes('Caveat')) {
         textElem.classList.add('font-caveat');
@@ -2029,13 +2671,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     }
     if (scene && scene.isCutscene) {
       if (scene.cutsceneType === 'text' || scene.cutsceneType === 'autotext') {
-        // Draw Background
-        let bgSrc = "";
-        if (scene.background) {
-          const asset = this.project.assets.backgrounds.find(b => b.id === scene.background);
-          if (asset) bgSrc = asset.path;
-        }
-        bgElem.style.backgroundImage = bgSrc ? `url('${bgSrc}')` : "linear-gradient(135deg, #1e293b, #0f172a)";
+        this.applyPreviewBackground(bgElem, scene, isLightTheme);
         
         speakerElem.innerText = scene.cutsceneType === 'autotext' ? "⏳ Auto Text Cutscene" : "📜 Fullscreen Text";
         speakerElem.style.color = "var(--accent)";
@@ -2057,13 +2693,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         });
         return;
       } else if (scene.cutsceneType === 'image') {
-        // Draw Background
-        let bgSrc = "";
-        if (scene.background) {
-          const asset = this.project.assets.backgrounds.find(b => b.id === scene.background);
-          if (asset) bgSrc = asset.path;
-        }
-        bgElem.style.backgroundImage = bgSrc ? `url('${bgSrc}')` : "linear-gradient(135deg, #1e293b, #0f172a)";
+        this.applyPreviewBackground(bgElem, scene, isLightTheme);
         
         speakerElem.innerText = "🖼️ Image Cutscene";
         speakerElem.style.color = "var(--accent)";
@@ -2095,7 +2725,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     textElem.style.textDecoration = "none";
 
     if (!this.activeSceneId || !step) {
-      bgElem.style.backgroundImage = "none";
+      this.applyPreviewBackground(bgElem, scene, isLightTheme);
       speakerElem.innerText = "Narrator";
       textElem.innerText = "No active dialogue selected.";
       Object.values(slots).forEach(slot => {
@@ -2106,12 +2736,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     }
 
     // 1. Draw Background
-    let bgSrc = "";
-    if (scene.background) {
-      const asset = this.project.assets.backgrounds.find(b => b.id === scene.background);
-      if (asset) bgSrc = asset.path;
-    }
-    bgElem.style.backgroundImage = bgSrc ? `url('${bgSrc}')` : "linear-gradient(135deg, #1e293b, #0f172a)";
+    this.applyPreviewBackground(bgElem, scene, isLightTheme);
 
     // 2. Set Text & Speaker
     let speakerName = "Narrator";
@@ -2119,7 +2744,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
     if (step.speaker === 'narrator') {
       speakerElem.innerText = "Narrator";
-      speakerElem.style.color = "var(--text-muted)";
+      speakerElem.style.color = isLightTheme ? '#475569' : '#94a3b8';
     } else {
       const char = this.project.assets.characters.find(c => c.id === step.speaker);
       if (char) {
@@ -2144,7 +2769,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       const img = slot.querySelector('.mini-sprite-img');
       const data = layout[pos];
 
-      if (data && data.characterId && data.spriteId) {
+      if (data && data.characterId) {
         // Resolve sprite
         let spritePath = "";
         let isNonVisual = false;
@@ -2154,7 +2779,8 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           isNonVisual = !!char.nonvisual;
           scale = char.scale !== undefined ? char.scale : 1;
           if (char.sprites) {
-            const sprite = char.sprites.find(s => s.id === data.spriteId);
+            const spriteId = data.spriteId || char.defaultExpression || (char.sprites[0] && char.sprites[0].id);
+            const sprite = char.sprites.find(s => s.id === spriteId);
             if (sprite) spritePath = sprite.path;
           }
         }
@@ -2185,76 +2811,518 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     });
   }
 
+  getVariableDefinitions() {
+    const logic = window.VNFairyCore && window.VNFairyCore.logicModel;
+    if (!logic) return [];
+    this.project.config = this.project.config || {};
+    this.project.config.variables = logic.normalizeVariableDefinitions(this.project.config);
+    return this.project.config.variables;
+  }
+
+  ensureAssetLibrary() {
+    this.project.assets = this.project.assets || {};
+    this.project.assets.library = this.project.assets.library || { folders: [], items: {} };
+    this.project.assets.library.folders = Array.isArray(this.project.assets.library.folders) ? this.project.assets.library.folders : [];
+    this.project.assets.library.items = this.project.assets.library.items && typeof this.project.assets.library.items === 'object' ? this.project.assets.library.items : {};
+    return this.project.assets.library;
+  }
+
+  getAssetFilenames(type) {
+    return (this.assets[type] || []).map(item => typeof item === 'string' ? item : item.filename).filter(Boolean);
+  }
+
+  getAssetMeta(type, filename) {
+    const metadata = this.assetMetadata[type] && this.assetMetadata[type][filename];
+    if (metadata) return metadata;
+    const project = this.project || {};
+    return {
+      filename,
+      type,
+      size: 0,
+      usageCount: window.VNFairyCore && window.VNFairyCore.assetRegistry
+        ? window.VNFairyCore.assetRegistry.findUsages(project, type, filename).length : 0,
+      usages: window.VNFairyCore && window.VNFairyCore.assetRegistry
+        ? window.VNFairyCore.assetRegistry.findUsages(project, type, filename) : []
+    };
+  }
+
+  getAssetLibraryMeta(type, filename) {
+    const library = this.ensureAssetLibrary();
+    const key = window.VNFairyCore && window.VNFairyCore.assetRegistry
+      ? window.VNFairyCore.assetRegistry.assetKey(type, filename) : `${type}:${filename}`;
+    const current = library.items[key] || {};
+    current.tags = Array.isArray(current.tags) ? current.tags : [];
+    current.favorite = !!current.favorite;
+    current.folderId = current.folderId || '';
+    library.items[key] = current;
+    return current;
+  }
+
+  getAssetRecords(type) {
+    const records = this.getAssetFilenames(type).map(filename => ({
+      filename,
+      metadata: this.getAssetMeta(type, filename),
+      library: this.getAssetLibraryMeta(type, filename)
+    }));
+    const sort = document.getElementById('asset-manager-sort')?.value || 'name';
+    records.sort((a, b) => {
+      if (sort === 'size') return (b.metadata.size || 0) - (a.metadata.size || 0);
+      if (sort === 'usage') return (b.metadata.usageCount || 0) - (a.metadata.usageCount || 0);
+      if (sort === 'type') return String(a.metadata.detectedType || '').localeCompare(String(b.metadata.detectedType || '')) || a.filename.localeCompare(b.filename);
+      if (sort === 'recent') return String(b.metadata.modifiedAt || '').localeCompare(String(a.metadata.modifiedAt || ''));
+      return a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' });
+    });
+    return records;
+  }
+
+  assetMatches(type, record, localQuery = '') {
+    const globalQuery = (document.getElementById('asset-manager-search')?.value || '').toLowerCase().trim();
+    const tagQuery = (document.getElementById('asset-manager-tag-filter')?.value || '').toLowerCase().trim();
+    const folderId = document.getElementById('asset-manager-folder-filter')?.value || '';
+    const favoritesOnly = !!document.getElementById('asset-manager-favorites-only')?.checked;
+    const library = record.library;
+    const haystack = [record.filename, type, record.metadata.detectedType, ...(library.tags || [])].join(' ').toLowerCase();
+    if (globalQuery && !haystack.includes(globalQuery)) return false;
+    if (localQuery && !haystack.includes(localQuery)) return false;
+    if (tagQuery && !(library.tags || []).some(tag => String(tag).toLowerCase().includes(tagQuery))) return false;
+    if (folderId && library.folderId !== folderId) return false;
+    if (favoritesOnly && !library.favorite) return false;
+    return true;
+  }
+
+  formatAssetBytes(bytes) {
+    const value = Number(bytes) || 0;
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  assetUrl(type, filename) {
+    return `data/projects/${encodeURIComponent(this.projectId || 'demo')}/assets/${type}/${encodeURIComponent(filename)}`;
+  }
+
+  refreshAssetFolderFilter() {
+    const select = document.getElementById('asset-manager-folder-filter');
+    const folders = this.ensureAssetLibrary().folders;
+    if (select) {
+      const current = select.value;
+      select.innerHTML = '<option value="">All folders</option>';
+      folders.forEach(folder => {
+        const option = document.createElement('option');
+        option.value = folder.id;
+        option.textContent = folder.name;
+        select.appendChild(option);
+      });
+      select.value = folders.some(folder => folder.id === current) ? current : '';
+    }
+    const bulkFolder = document.getElementById('asset-bulk-folder');
+    if (bulkFolder) {
+      const current = bulkFolder.value;
+      bulkFolder.innerHTML = '<option value="">Move to folder…</option><option value="__none__">No folder</option>';
+      folders.forEach(folder => {
+        const option = document.createElement('option');
+        option.value = folder.id;
+        option.textContent = folder.name;
+        bulkFolder.appendChild(option);
+      });
+      bulkFolder.value = folders.some(folder => folder.id === current) || current === '__none__' ? current : '';
+    }
+  }
+
+  setAssetSelected(assetKey, selected) {
+    if (selected) this.selectedAssetKeys.add(assetKey);
+    else this.selectedAssetKeys.delete(assetKey);
+    this.updateAssetSelectionUI();
+  }
+
+  updateAssetSelectionUI() {
+    const count = this.selectedAssetKeys.size;
+    const label = document.getElementById('asset-selection-count');
+    if (label) label.textContent = `${count} selected`;
+    document.querySelectorAll('[data-asset-key]').forEach(element => {
+      const checked = this.selectedAssetKeys.has(element.dataset.assetKey);
+      element.classList.toggle('is-selected', checked);
+      const checkbox = element.querySelector('.asset-select-control input');
+      if (checkbox) checkbox.checked = checked;
+    });
+  }
+
+  selectVisibleAssets() {
+    document.querySelectorAll('.management-panel:not(.hidden) [data-asset-key]').forEach(element => this.selectedAssetKeys.add(element.dataset.assetKey));
+    this.updateAssetSelectionUI();
+  }
+
+  clearAssetSelection() {
+    this.selectedAssetKeys.clear();
+    this.updateAssetSelectionUI();
+  }
+
+  applyBulkAssetFolder() {
+    const value = document.getElementById('asset-bulk-folder')?.value;
+    if (!value || !this.selectedAssetKeys.size) return;
+    this.selectedAssetKeys.forEach(key => {
+      const splitAt = key.indexOf(':');
+      const meta = this.getAssetLibraryMeta(key.slice(0, splitAt), key.slice(splitAt + 1));
+      meta.folderId = value === '__none__' ? '' : value;
+    });
+    this.renderAssetsTab();
+    this.triggerAutoSave();
+    this.showToast(`Updated ${this.selectedAssetKeys.size} assets`);
+  }
+
+  applyBulkAssetTags() {
+    const input = document.getElementById('asset-bulk-tags');
+    const tags = String(input?.value || '').split(',').map(tag => tag.trim()).filter(Boolean);
+    if (!tags.length || !this.selectedAssetKeys.size) return;
+    this.selectedAssetKeys.forEach(key => {
+      const splitAt = key.indexOf(':');
+      const meta = this.getAssetLibraryMeta(key.slice(0, splitAt), key.slice(splitAt + 1));
+      meta.tags = [...new Set([...(meta.tags || []), ...tags])].slice(0, 30);
+    });
+    if (input) input.value = '';
+    this.renderAssetsTab();
+    this.triggerAutoSave();
+    this.showToast(`Tagged ${this.selectedAssetKeys.size} assets`);
+  }
+
+  attachAssetControls(container, type, record) {
+    const actions = container.querySelector('.asset-library-actions');
+    const favorite = actions.querySelector('[data-asset-action="favorite"]');
+    const usage = actions.querySelector('[data-asset-action="usage"]');
+    const replace = actions.querySelector('[data-asset-action="replace"]');
+    const remove = actions.querySelector('[data-asset-action="delete"]');
+    favorite.onclick = () => this.updateAssetMetadata(type, record.filename, 'favorite', !record.library.favorite);
+    usage.onclick = () => this.showAssetUsage(type, record.filename);
+    replace.onclick = () => this.replaceAssetEverywhere(type, record.filename);
+    if (remove) remove.onclick = event => this.deleteAsset(type, record.filename, event);
+    const folder = container.querySelector('.asset-folder-select');
+    if (folder) folder.onchange = event => this.updateAssetMetadata(type, record.filename, 'folderId', event.target.value);
+    const tags = container.querySelector('.asset-tags-input');
+    if (tags) tags.onchange = event => this.updateAssetMetadata(type, record.filename, 'tags', event.target.value);
+  }
+
+  renderAssetControls(type, record) {
+    const folders = this.ensureAssetLibrary().folders;
+    const folderOptions = `<option value="">No folder</option>${folders.map(folder => `<option value="${this.escapeHtml(folder.id)}" ${folder.id === record.library.folderId ? 'selected' : ''}>${this.escapeHtml(folder.name)}</option>`).join('')}`;
+    return `<div class="asset-library-actions"><button type="button" data-asset-action="favorite" class="asset-favorite-btn" title="${record.library.favorite ? 'Remove from favourites' : 'Add to favourites'}">${record.library.favorite ? '★' : '☆'}</button><button type="button" data-asset-action="usage" class="scene-action-btn">Uses ${record.metadata.usageCount || 0}</button><button type="button" data-asset-action="replace" class="scene-action-btn">Replace everywhere</button><button type="button" data-asset-action="delete" class="scene-action-btn btn-danger-text" title="Delete asset">Delete</button></div><div class="asset-library-meta"><select class="asset-folder-select" aria-label="Asset folder">${folderOptions}</select><input type="text" class="input-text asset-tags-input" value="${this.escapeHtml((record.library.tags || []).join(', '))}" placeholder="tags" aria-label="Asset tags"></div>`;
+  }
+
+  renderImageAssetCard(type, record) {
+    const card = document.createElement('div');
+    card.className = `asset-card asset-library-card${record.metadata.usageCount ? '' : ' is-unused'}`;
+    const assetKey = `${type}:${record.filename}`;
+    card.dataset.assetKey = assetKey;
+    card.innerHTML = `<label class="asset-select-control" title="Select asset"><input type="checkbox" aria-label="Select ${this.escapeHtml(record.filename)}" ${this.selectedAssetKeys.has(assetKey) ? 'checked' : ''}><span></span></label><img class="asset-thumbnail" loading="lazy" src="${this.assetUrl(type, record.filename)}" alt="${this.escapeHtml(record.filename)}"><div class="asset-card-overlay"><div class="asset-card-name" title="${this.escapeHtml(record.filename)}">${this.escapeHtml(record.filename)}</div></div><div class="asset-card-details"><span title="${this.escapeHtml(record.metadata.detectedType || 'Unknown type')}">${this.escapeHtml(record.filename)}</span><span class="muted">${this.formatAssetBytes(record.metadata.size)} · ${record.metadata.usageCount || 0} use${record.metadata.usageCount === 1 ? '' : 's'}</span></div>${this.renderAssetControls(type, record)}`;
+    card.querySelector('.asset-select-control input').onchange = event => this.setAssetSelected(assetKey, event.target.checked);
+    const image = card.querySelector('.asset-thumbnail');
+    if (image) image.onload = () => this.generateImageThumbnail(image);
+    this.attachAssetControls(card, type, record);
+    return card;
+  }
+
+  generateImageThumbnail(image) {
+    if (!image || image.dataset.thumbnailGenerated === 'true' || !image.naturalWidth) return;
+    const canvas = document.createElement('canvas');
+    const maxWidth = 320;
+    const maxHeight = 160;
+    const scale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight, 1);
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    try {
+      image.src = canvas.toDataURL('image/webp', 0.78);
+      image.dataset.thumbnailGenerated = 'true';
+    } catch (error) {
+      // Keep the source image when the browser refuses a canvas export.
+    }
+  }
+
+  renderAudioAssetItem(type, record) {
+    const item = document.createElement('div');
+    item.className = `audio-asset-item asset-library-audio${record.metadata.usageCount ? '' : ' is-unused'}`;
+    const assetKey = `${type}:${record.filename}`;
+    item.dataset.assetKey = assetKey;
+    item.innerHTML = `<label class="asset-select-control asset-select-inline" title="Select asset"><input type="checkbox" aria-label="Select ${this.escapeHtml(record.filename)}" ${this.selectedAssetKeys.has(assetKey) ? 'checked' : ''}><span></span></label><div class="audio-preview-wrap"><canvas class="audio-waveform" width="96" height="28" aria-label="Waveform preview"></canvas></div><div class="audio-asset-copy"><span class="asset-name"><span class="asset-type-badge">${type === 'music' ? 'Music' : type === 'sound' ? 'Voice' : 'Video'}</span>${this.escapeHtml(record.filename)}</span><span class="muted audio-asset-detail">${this.formatAssetBytes(record.metadata.size)} · ${record.metadata.usageCount || 0} use${record.metadata.usageCount === 1 ? '' : 's'}${type !== 'video' ? ' · duration loading…' : ''}</span></div><div class="audio-asset-actions"><button type="button" data-asset-action="favorite" class="asset-favorite-btn" title="${record.library.favorite ? 'Remove from favourites' : 'Add to favourites'}">${record.library.favorite ? '★' : '☆'}</button><button type="button" data-asset-action="usage" class="scene-action-btn">Uses</button><button type="button" data-asset-action="replace" class="scene-action-btn">Replace everywhere</button><button type="button" data-asset-action="delete" class="scene-action-btn btn-danger-text">Delete</button></div>${this.renderAssetControls(type, record)}`;
+    item.querySelector('.asset-select-control input').onchange = event => this.setAssetSelected(assetKey, event.target.checked);
+    item.querySelector('.asset-library-actions').classList.add('hidden');
+    this.attachAssetControls(item, type, record);
+    item.querySelector('[data-asset-action="favorite"]').onclick = () => this.updateAssetMetadata(type, record.filename, 'favorite', !record.library.favorite);
+    item.querySelector('[data-asset-action="usage"]').onclick = () => this.showAssetUsage(type, record.filename);
+    item.querySelector('[data-asset-action="replace"]').onclick = () => this.replaceAssetEverywhere(type, record.filename);
+    item.querySelector('[data-asset-action="delete"]').onclick = event => this.deleteAsset(type, record.filename, event);
+    if (type !== 'video') this.prepareAudioPreview(item, type, record.filename);
+    return item;
+  }
+
+  prepareAudioPreview(item, type, filename) {
+    const canvas = item.querySelector('.audio-waveform');
+    const detail = item.querySelector('.audio-asset-detail');
+    if (!canvas) return;
+    const drawFallback = () => {
+      const context = canvas.getContext('2d');
+      if (!context) return;
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--primary') || '#a5d6a7';
+      context.beginPath();
+      for (let index = 0; index < canvas.width; index += 1) {
+        const height = 4 + ((index * 17) % 17);
+        context.moveTo(index, canvas.height / 2 - height / 2);
+        context.lineTo(index, canvas.height / 2 + height / 2);
+      }
+      context.stroke();
+    };
+    drawFallback();
+    const audio = document.createElement('audio');
+    audio.preload = 'metadata';
+    audio.src = this.assetUrl(type, filename);
+    audio.onloadedmetadata = () => {
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      if (detail && duration) detail.textContent = `${this.formatAssetBytes(this.getAssetMeta(type, filename).size)} · ${this.formatDuration(duration)} · ${this.getAssetMeta(type, filename).usageCount || 0} uses`;
+    };
+    fetch(this.assetUrl(type, filename)).then(response => response.arrayBuffer()).then(buffer => {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) return;
+      const context = new AudioContextCtor();
+      return context.decodeAudioData(buffer).then(decoded => {
+        const data = decoded.getChannelData(0);
+        const draw = canvas.getContext('2d');
+        if (!draw) return;
+        draw.clearRect(0, 0, canvas.width, canvas.height);
+        draw.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--primary') || '#a5d6a7';
+        draw.beginPath();
+        for (let x = 0; x < canvas.width; x += 1) {
+          const start = Math.floor((x / canvas.width) * data.length);
+          const end = Math.max(start + 1, Math.floor(((x + 1) / canvas.width) * data.length));
+          let peak = 0;
+          for (let sample = start; sample < end; sample += 1) peak = Math.max(peak, Math.abs(data[sample] || 0));
+          draw.moveTo(x, canvas.height / 2 - peak * canvas.height / 2);
+          draw.lineTo(x, canvas.height / 2 + peak * canvas.height / 2);
+        }
+        draw.stroke();
+        context.close().catch(() => {});
+      });
+    }).catch(() => {});
+  }
+
+  formatDuration(seconds) {
+    const value = Math.max(0, Math.round(Number(seconds) || 0));
+    return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
+  }
+
+  renderAssetFileList(type, list, localQuery, renderer) {
+    if (!list) return;
+    list.innerHTML = '';
+    this.getAssetRecords(type).filter(record => this.assetMatches(type, record, localQuery)).forEach(record => list.appendChild(renderer(record)));
+    if (!list.children.length) list.innerHTML = '<div class="muted asset-empty-state">No matching assets.</div>';
+  }
+
+  updateAssetMetadata(type, filename, field, value) {
+    const meta = this.getAssetLibraryMeta(type, filename);
+    if (field === 'tags') meta.tags = String(value || '').split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 30);
+    else if (field === 'favorite') meta.favorite = !!value;
+    else if (field === 'folderId') meta.folderId = String(value || '');
+    this.renderAssetsTab();
+    this.triggerAutoSave();
+  }
+
+  createAssetFolder() {
+    const name = prompt('Folder name');
+    if (name === null || !name.trim()) return;
+    const library = this.ensureAssetLibrary();
+    const baseId = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `folder-${Date.now()}`;
+    let id = baseId;
+    let suffix = 2;
+    while (library.folders.some(folder => folder.id === id)) id = `${baseId}-${suffix++}`;
+    library.folders.push({ id, name: name.trim().slice(0, 80) });
+    this.refreshAssetFolderFilter();
+    this.renderAssetsTab();
+    this.triggerAutoSave();
+  }
+
+  showAssetUsage(type, filename) {
+    const metadata = this.getAssetMeta(type, filename);
+    const usages = metadata.usages || [];
+    let modal = document.getElementById('asset-usage-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'asset-usage-modal';
+      modal.className = 'modal hidden';
+      modal.innerHTML = '<div class="modal-backdrop"></div><div class="modal-content glass-panel animate-scale asset-usage-modal-content"><div class="modal-header"><h2 id="asset-usage-title">Asset usage</h2><button type="button" class="modal-close">&times;</button></div><div class="modal-body"><div id="asset-usage-list"></div></div></div>';
+      document.body.appendChild(modal);
+      modal.querySelector('.modal-backdrop').onclick = () => modal.classList.add('hidden');
+      modal.querySelector('.modal-close').onclick = () => modal.classList.add('hidden');
+    }
+    modal.querySelector('#asset-usage-title').textContent = `${filename} · ${usages.length} use${usages.length === 1 ? '' : 's'}`;
+    const list = modal.querySelector('#asset-usage-list');
+    list.innerHTML = usages.length
+      ? usages.map(usage => `<div class="asset-usage-row"><strong>${this.escapeHtml(usage.location || 'Project')}</strong><span class="muted">${this.escapeHtml(usage.value || '')}</span></div>`).join('')
+      : '<div class="muted">This asset is not referenced by any scene, character, setting, or unlockable.</div>';
+    modal.classList.remove('hidden');
+  }
+
+  replaceAssetEverywhere(type, filename) {
+    const candidates = this.getAssetFilenames(type).filter(candidate => candidate !== filename);
+    if (!candidates.length) {
+      this.showToast('Upload another asset in this category before replacing references.');
+      return;
+    }
+    const target = prompt(`Replace “${filename}” everywhere with one of these files:\n${candidates.join('\n')}\n\nEnter the target filename exactly.`);
+    if (!target || !candidates.includes(target)) return;
+    const registry = window.VNFairyCore && window.VNFairyCore.assetRegistry;
+    const oldPath = registry ? registry.assetPath(this.project.id, type, filename) : `data/projects/${this.project.id}/assets/${type}/${filename}`;
+    const newPath = registry ? registry.assetPath(this.project.id, type, target) : `data/projects/${this.project.id}/assets/${type}/${target}`;
+    const oldId = registry ? registry.assetIdFromFilename(filename) : filename.replace(/\.[^/.]+$/, '');
+    const newId = registry ? registry.assetIdFromFilename(target) : target.replace(/\.[^/.]+$/, '');
+    const idKeys = {
+      bg: new Set(['background']), music: new Set(['music']), sound: new Set(['voice', 'endingSfx', 'uiClickSound']), video: new Set(['video']), char: new Set()
+    }[type];
+    let replacements = 0;
+    const replaceValue = (value, key, ancestors) => {
+      if (typeof value !== 'string') return value;
+      if (value === oldPath || value.endsWith(`/assets/${type}/${filename}`)) { replacements += 1; return newPath; }
+      if (idKeys && idKeys.has(key) && value === oldId) { replacements += 1; return newId; }
+      if (key === 'path' && value === oldPath) { replacements += 1; return newPath; }
+      return value;
+    };
+    const walk = (value, key = '', ancestors = []) => {
+      if (Array.isArray(value)) return value.map((item, index) => walk(item, String(index), ancestors.concat(String(index))));
+      if (!value || typeof value !== 'object') return replaceValue(value, key, ancestors);
+      Object.keys(value).forEach(childKey => { value[childKey] = walk(value[childKey], childKey, ancestors.concat(key)); });
+      return value;
+    };
+    walk(this.project);
+    if (replacements) {
+      this.populateAssetDropdowns();
+      this.renderAssetsTab();
+      this.triggerAutoSave();
+      this.showToast(`Replaced ${replacements} reference${replacements === 1 ? '' : 's'} everywhere`);
+    } else {
+      this.showToast('No matching references found.');
+    }
+  }
+
+  getVariableDefinition(name) {
+    return this.getVariableDefinitions().find(definition => definition.name === name) || null;
+  }
+
+  variableOptionsHtml(selected = '', emptyLabel = '-- Select Variable --') {
+    let html = `<option value="">${emptyLabel}</option>`;
+    this.getVariableDefinitions().forEach(definition => {
+      html += `<option value="${this.escapeHtml(definition.name)}" ${definition.name === selected ? 'selected' : ''}>${this.escapeHtml(definition.name)} (${definition.type})</option>`;
+    });
+    return html;
+  }
+
+  getChoiceActions(choice) {
+    if (Array.isArray(choice.actions)) return choice.actions;
+    if (choice.customVarName) {
+      return [{
+        type: choice.customVarOp === 'increase' ? 'increment' : choice.customVarOp === 'decrease' ? 'decrement' : 'set',
+        variable: choice.customVarName,
+        value: choice.customVarValue !== undefined ? choice.customVarValue : 1
+      }];
+    }
+    return [];
+  }
+
+  actionOperators(definition) {
+    if (!definition) return ['set'];
+    if (definition.type === 'boolean') return ['set', 'toggle'];
+    if (definition.type === 'text') return ['set'];
+    return ['set', 'increment', 'decrement'];
+  }
+
+  actionValueEditor(action, definition, choiceIndex, actionIndex) {
+    if (!definition || action.type === 'toggle') return '';
+    const onInput = `oninput="window.editor.updateChoiceAction(${choiceIndex}, ${actionIndex}, 'value', this.value)"`;
+    if (definition.type === 'boolean') {
+      return `<select class="select-input branching-value branching-value-boolean" onchange="window.editor.updateChoiceAction(${choiceIndex}, ${actionIndex}, 'value', this.value)"><option value="true" ${action.value === true || action.value === 'true' ? 'selected' : ''}>True</option><option value="false" ${action.value === false || action.value === 'false' ? 'selected' : ''}>False</option></select>`;
+    }
+    if (definition.type === 'inventory') {
+      return `<input type="text" class="input-text branching-value branching-item-name" placeholder="Item name" value="${this.escapeHtml(action.item || '')}" oninput="window.editor.updateChoiceAction(${choiceIndex}, ${actionIndex}, 'item', this.value)"><input type="number" min="0" step="1" class="input-text branching-value branching-count" placeholder="Count" value="${this.escapeHtml(action.value === undefined ? 1 : action.value)}" ${onInput}>`;
+    }
+    const inputType = definition.type === 'number' ? 'number' : 'text';
+    const max = definition.type === 'text' ? `maxlength="${window.VNFairyCore.logicModel.MAX_TEXT_LENGTH}"` : '';
+    return `<input type="${inputType}" class="input-text branching-value" placeholder="Value" value="${this.escapeHtml(action.value === undefined ? (definition.type === 'number' ? 1 : '') : action.value)}" ${max} ${onInput}>`;
+  }
+
+  renderChoiceAction(choiceIndex, actionIndex, action) {
+    const definition = this.getVariableDefinition(action.variable);
+    const operators = this.actionOperators(definition);
+    let operatorOptions = '';
+    operators.forEach(operator => {
+      const labels = { set: 'Set to', increment: 'Increment by', decrement: 'Decrement by', toggle: 'Toggle' };
+      operatorOptions += `<option value="${operator}" ${action.type === operator ? 'selected' : ''}>${labels[operator]}</option>`;
+    });
+    return `<div class="branching-rule-row"><select class="select-input branching-variable" aria-label="Action variable" onchange="window.editor.updateChoiceAction(${choiceIndex}, ${actionIndex}, 'variable', this.value)">${this.variableOptionsHtml(action.variable, '-- Select Variable --')}</select><select class="select-input branching-operator" aria-label="Action" onchange="window.editor.updateChoiceAction(${choiceIndex}, ${actionIndex}, 'type', this.value)">${operatorOptions}</select>${this.actionValueEditor(action, definition, choiceIndex, actionIndex)}<button class="btn-danger branching-delete-rule" aria-label="Delete action" onclick="window.editor.deleteChoiceAction(${choiceIndex}, ${actionIndex})">&times;</button></div>`;
+  }
+
+  renderChoiceCondition(choiceIndex, conditionIndex, condition) {
+    const definition = this.getVariableDefinition(condition.variable) || { type: 'number' };
+    const logic = window.VNFairyCore && window.VNFairyCore.logicModel;
+    const operators = logic ? logic.operatorForType(definition.type) : ['==', '!=', '>', '<', '>=', '<='];
+    const operatorOptions = operators.map(operator => `<option value="${operator}" ${condition.operator === operator ? 'selected' : ''}>${operator.replace('_', ' ')}</option>`).join('');
+    let valueEditor;
+    if (definition.type === 'boolean') {
+      valueEditor = `<select class="select-input branching-value branching-value-boolean" onchange="window.editor.updateChoiceCondition(${choiceIndex}, ${conditionIndex}, 'value', this.value)"><option value="true" ${condition.value === true || condition.value === 'true' ? 'selected' : ''}>True</option><option value="false" ${condition.value === false || condition.value === 'false' ? 'selected' : ''}>False</option></select>`;
+    } else if (definition.type === 'inventory') {
+      valueEditor = `<input type="text" class="input-text branching-value branching-item-name" placeholder="Item" value="${this.escapeHtml(condition.item || '')}" oninput="window.editor.updateChoiceCondition(${choiceIndex}, ${conditionIndex}, 'item', this.value)"><input type="number" min="0" step="1" class="input-text branching-value branching-count" placeholder="Count" value="${this.escapeHtml(condition.value === undefined ? 1 : condition.value)}" oninput="window.editor.updateChoiceCondition(${choiceIndex}, ${conditionIndex}, 'value', this.value)">`;
+    } else {
+      const inputType = definition.type === 'number' ? 'number' : 'text';
+      const max = definition.type === 'text' ? `maxlength="${window.VNFairyCore.logicModel.MAX_TEXT_LENGTH}"` : '';
+      valueEditor = `<input type="${inputType}" class="input-text branching-value" placeholder="Value" value="${this.escapeHtml(condition.value === undefined ? 0 : condition.value)}" ${max} oninput="window.editor.updateChoiceCondition(${choiceIndex}, ${conditionIndex}, 'value', this.value)">`;
+    }
+    return `<div class="branching-rule-row"><select class="select-input branching-variable" aria-label="Requirement variable" onchange="window.editor.updateChoiceCondition(${choiceIndex}, ${conditionIndex}, 'variable', this.value)">${this.variableOptionsHtml(condition.variable)}</select><select class="select-input branching-operator" aria-label="Comparison" onchange="window.editor.updateChoiceCondition(${choiceIndex}, ${conditionIndex}, 'operator', this.value)">${operatorOptions}</select>${valueEditor}<button class="btn-danger branching-delete-rule" aria-label="Delete requirement" onclick="window.editor.deleteChoiceCondition(${choiceIndex}, ${conditionIndex})">&times;</button></div>`;
+  }
+
   // Option Choices build
   renderChoicesBuilder() {
     const list = document.getElementById('choices-builder-list');
+    if (!list) return;
     list.innerHTML = "";
-
     const scene = this.project.scenes[this.activeSceneId];
     const choices = scene.choices || [];
 
     choices.forEach((choice, index) => {
       const card = document.createElement('div');
       card.className = "choice-builder-card";
-      card.style.display = "flex";
-      card.style.flexDirection = "column";
-      card.style.gap = "8px";
-      card.style.padding = "10px";
-      card.style.border = "1px solid var(--border-color)";
-      card.style.borderRadius = "var(--radius-sm)";
-      card.style.background = "rgba(255, 255, 255, 0.01)";
-      
-      // Target options dropdown
       let targetOptions = `<option value="">Select Destination Scene...</option>`;
       Object.keys(this.project.scenes).forEach(id => {
-        const isSel = choice.target === id ? "selected" : "";
-        targetOptions += `<option value="${id}" ${isSel}>🎬 ${this.project.scenes[id].name || id}</option>`;
+        targetOptions += `<option value="${this.escapeHtml(id)}" ${choice.target === id ? 'selected' : ''}>${this.escapeHtml(this.project.scenes[id].name || id)}</option>`;
       });
-
-      // Tracked numbers options dropdown
-      let varOptions = `<option value="">-- No variable adjustment --</option>`;
-      const trackedNumbers = (this.project.config && this.project.config.trackedNumbers) || [];
-      trackedNumbers.forEach(name => {
-        const isSel = choice.customVarName === name ? "selected" : "";
-        varOptions += `<option value="${name}" ${isSel}>📊 ${name}</option>`;
-      });
-
-      // Op options
-      const opSelIncrease = choice.customVarOp === 'increase' || !choice.customVarOp ? 'selected' : '';
-      const opSelDecrease = choice.customVarOp === 'decrease' ? 'selected' : '';
-      const opSelSet = choice.customVarOp === 'set' ? 'selected' : '';
-
+      const actions = this.getChoiceActions(choice);
+      const actionHtml = actions.length
+        ? actions.map((action, actionIndex) => this.renderChoiceAction(index, actionIndex, action)).join('')
+        : `<div class="branching-empty-rule">No actions. This choice will only route to its destination.</div>`;
+      const conditions = Array.isArray(choice.conditions) ? choice.conditions : [];
+      const conditionHtml = conditions.length
+        ? conditions.map((condition, conditionIndex) => this.renderChoiceCondition(index, conditionIndex, condition)).join('')
+        : `<div class="branching-empty-rule">No requirements. This choice is always available.</div>`;
       const autoTrackName = choice.text ? choice.text.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '') : 'OptionName';
-
       card.innerHTML = `
-        <div style="display: flex; gap: 8px; align-items: center; width: 100%;">
-          <span class="muted" style="font-weight:600; font-size:0.8rem; white-space: nowrap;">Choice #${index + 1}</span>
-          <input type="text" class="input-text" placeholder="Button Option Text (e.g. Yes!)" value="${choice.text || ""}" style="width:180px;" oninput="window.editor.updateChoiceText(${index}, this.value)">
-          <select class="select-input choice-target-select" data-asset-type="scene" onchange="window.editor.updateChoiceTarget(${index}, this.value)" style="flex-grow:1;">
-            ${targetOptions}
-          </select>
-          <button class="btn-danger" style="padding: 6px 10px;" onclick="window.editor.deleteChoice(${index})">&times;</button>
+        <div class="choice-builder-heading">
+          <span class="choice-number">Choice ${index + 1}</span>
+          <button class="btn-danger choice-delete-button" aria-label="Delete choice ${index + 1}" onclick="window.editor.deleteChoice(${index})">&times;</button>
         </div>
-        <div style="display: flex; gap: 8px; align-items: center; width: 100%; padding-left: 56px; flex-wrap: wrap;">
-          <span class="muted" style="font-size:0.75rem; white-space: nowrap;">Variable:</span>
-          <select class="select-input" onchange="window.editor.updateChoiceVarName(${index}, this.value)" style="width:140px; font-size:0.75rem; padding: 4px;">
-            ${varOptions}
-          </select>
-          
-          ${choice.customVarName ? `
-            <select class="select-input" onchange="window.editor.updateChoiceVarOp(${index}, this.value)" style="width:110px; font-size:0.75rem; padding: 4px;">
-              <option value="increase" ${opSelIncrease}>Increase by</option>
-              <option value="decrease" ${opSelDecrease}>Decrease by</option>
-              <option value="set" ${opSelSet}>Set to</option>
-            </select>
-            <input type="number" class="input-text" placeholder="value" value="${choice.customVarValue !== undefined ? choice.customVarValue : "1"}" style="width:60px; font-size:0.75rem; padding: 4px 8px;" oninput="window.editor.updateChoiceVarValue(${index}, this.value)">
-          ` : ''}
-          <span class="muted" style="font-size:0.7rem; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px;" title="Auto-tracks: choice_${choice.id}">Auto-tracks choice: choice_${autoTrackName}</span>
+        <div class="choice-route-grid">
+          <label><span>Choice text</span><input type="text" class="input-text" placeholder="Button option text" value="${this.escapeHtml(choice.text || '')}" oninput="window.editor.updateChoiceText(${index}, this.value)"></label>
+          <label><span>Destination scene</span><select class="select-input choice-target-select" data-asset-type="scene" onchange="window.editor.updateChoiceTarget(${index}, this.value)">${targetOptions}</select></label>
         </div>
-      `;
-
+        <section class="choice-rule-section">
+          <div class="choice-rule-heading"><strong>Requirements</strong><span class="muted">Controls when this choice is available</span><button class="btn-secondary" onclick="window.editor.addChoiceCondition(${index})">+ Add requirement</button></div>
+          <div class="choice-rule-list">${conditionHtml}</div>
+        </section>
+        <section class="choice-rule-section">
+          <div class="choice-rule-heading"><strong>Actions</strong><span class="muted">Updates variables after selection</span><button class="btn-secondary" onclick="window.editor.addChoiceAction(${index})">+ Add action</button></div>
+          <div class="choice-rule-list">${actionHtml}</div>
+          <span class="choice-auto-track muted" title="Auto-tracks: choice_${this.escapeHtml(choice.id || autoTrackName)}">Automatically tracks this choice</span>
+        </section>`;
       list.appendChild(card);
     });
+    this.convertAllAssetSelects();
     this.convertAllAssetSelects();
   }
 
@@ -2265,7 +3333,9 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       id: "choice_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5),
       text: "New Option",
       action: "jump",
-      target: ""
+      target: "",
+      actions: [],
+      conditions: []
     });
     this.renderChoicesBuilder();
     this.triggerAutoSave();
@@ -2292,13 +3362,11 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   updateChoiceVarName(index, varName) {
     const scene = this.project.scenes[this.activeSceneId];
-    scene.choices[index].customVarName = varName;
-    if (!scene.choices[index].customVarOp) {
-      scene.choices[index].customVarOp = "increase";
-    }
-    if (scene.choices[index].customVarValue === undefined) {
-      scene.choices[index].customVarValue = 1;
-    }
+    const choice = scene.choices[index];
+    choice.actions = varName ? [{ type: 'increment', variable: varName, value: 1 }] : [];
+    delete choice.customVarName;
+    delete choice.customVarOp;
+    delete choice.customVarValue;
     this.renderChoicesBuilder();
     this.triggerAutoSave();
   }
@@ -2316,6 +3384,88 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     this.triggerAutoSave();
   }
 
+  addChoiceAction(choiceIndex) {
+    const scene = this.project.scenes[this.activeSceneId];
+    const choice = scene.choices[choiceIndex];
+    choice.actions = this.getChoiceActions(choice).map(action => ({ ...action }));
+    choice.actions.push({ type: 'set', variable: this.getVariableDefinitions()[0]?.name || '', value: 1 });
+    delete choice.customVarName;
+    delete choice.customVarOp;
+    delete choice.customVarValue;
+    this.renderChoicesBuilder();
+    this.triggerAutoSave();
+  }
+
+  deleteChoiceAction(choiceIndex, actionIndex) {
+    const choice = this.project.scenes[this.activeSceneId].choices[choiceIndex];
+    choice.actions = this.getChoiceActions(choice).filter((_, index) => index !== actionIndex);
+    delete choice.customVarName;
+    delete choice.customVarOp;
+    delete choice.customVarValue;
+    this.renderChoicesBuilder();
+    this.triggerAutoSave();
+  }
+
+  updateChoiceAction(choiceIndex, actionIndex, field, value) {
+    const choice = this.project.scenes[this.activeSceneId].choices[choiceIndex];
+    choice.actions = this.getChoiceActions(choice).map(action => ({ ...action }));
+    const action = choice.actions[actionIndex];
+    if (!action) return;
+    if (field === 'type') action.type = value;
+    else if (field === 'variable') {
+      action.variable = value;
+      const definition = this.getVariableDefinition(value);
+      const allowed = this.actionOperators(definition);
+      if (definition && !allowed.includes(action.type)) action.type = allowed[0];
+      if (definition && definition.type === 'inventory') action.item = action.item || '';
+    } else if (field === 'value') {
+      const definition = this.getVariableDefinition(action.variable);
+      action.value = definition && definition.type === 'number' ? (Number.isFinite(Number(value)) ? Number(value) : 1) : value;
+    } else if (field === 'item') action.item = value;
+    delete choice.customVarName;
+    delete choice.customVarOp;
+    delete choice.customVarValue;
+    if (field === 'type' || field === 'variable') this.renderChoicesBuilder();
+    this.triggerAutoSave();
+  }
+
+  addChoiceCondition(choiceIndex) {
+    const choice = this.project.scenes[this.activeSceneId].choices[choiceIndex];
+    choice.conditions = Array.isArray(choice.conditions) ? choice.conditions : [];
+    choice.conditions.push({ type: 'variable', variable: this.getVariableDefinitions()[0]?.name || '', operator: '==', value: 0 });
+    this.renderChoicesBuilder();
+    this.triggerAutoSave();
+  }
+
+  deleteChoiceCondition(choiceIndex, conditionIndex) {
+    const choice = this.project.scenes[this.activeSceneId].choices[choiceIndex];
+    choice.conditions = (choice.conditions || []).filter((_, index) => index !== conditionIndex);
+    this.renderChoicesBuilder();
+    this.triggerAutoSave();
+  }
+
+  updateChoiceCondition(choiceIndex, conditionIndex, field, value) {
+    const choice = this.project.scenes[this.activeSceneId].choices[choiceIndex];
+    const condition = choice.conditions && choice.conditions[conditionIndex];
+    if (!condition) return;
+    const definition = this.getVariableDefinition(field === 'variable' ? value : condition.variable);
+    if (field === 'value' && definition && definition.type === 'number') condition.value = Number.isFinite(Number(value)) ? Number(value) : 0;
+    else if (field === 'value' && definition && definition.type === 'boolean') condition.value = value === true || value === 'true';
+    else if (field === 'value') condition.value = String(value).slice(0, window.VNFairyCore.logicModel.MAX_TEXT_LENGTH);
+    else if (field === 'item') condition.item = String(value).slice(0, 120);
+    else condition[field] = value;
+    if (field === 'variable') {
+      const operators = window.VNFairyCore.logicModel.operatorForType(definition ? definition.type : 'number');
+      if (!operators.includes(condition.operator)) condition.operator = operators[0];
+      if (definition) {
+        condition.value = definition.type === 'boolean' ? false : definition.type === 'number' || definition.type === 'inventory' ? 0 : '';
+        if (definition.type !== 'inventory') delete condition.item;
+      }
+      this.renderChoicesBuilder();
+    }
+    this.triggerAutoSave();
+  }
+
   // Render conditional branches list for active scene
   renderConditionalBranches() {
     const list = document.getElementById('scene-conditions-list');
@@ -2325,30 +3475,24 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     const scene = this.project.scenes[this.activeSceneId];
     if (!scene) return;
     const branches = scene.conditionalBranches || [];
+    const count = document.getElementById('conditional-jumps-count');
+    if (count) count.textContent = String(branches.length);
 
     branches.forEach((branch, index) => {
       const card = document.createElement('div');
-      card.style.display = "flex";
-      card.style.flexDirection = "column";
-      card.style.gap = "8px";
-      card.style.background = "rgba(255,255,255,0.02)";
-      card.style.padding = "10px";
-      card.style.borderRadius = "var(--radius-sm)";
-      card.style.border = "1px solid var(--border-color)";
-      card.style.width = "100%";
-      card.style.boxSizing = "border-box";
+      card.className = "conditional-jump-card";
 
       // Condition type selector
       const condType = branch.type || 'choice'; // 'choice' or 'number'
       const selChoice = condType === 'choice' ? 'selected' : '';
-      const selNumber = condType === 'number' ? 'selected' : '';
+      const selNumber = condType === 'number' || condType === 'variable' ? 'selected' : '';
 
       // Target scene options
       let targetOptions = `<option value="">End of Novel (Roll Credits)</option>`;
       Object.keys(this.project.scenes).forEach(id => {
         if (id === this.activeSceneId) return; // Can't branch to self
         const isSel = branch.target === id ? "selected" : "";
-        targetOptions += `<option value="${id}" ${isSel}>🎬 ${this.project.scenes[id].name || id}</option>`;
+        targetOptions += `<option value="${id}" ${isSel}>${this.project.scenes[id].name || id}</option>`;
       });
 
       let conditionHtml = "";
@@ -2361,7 +3505,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           if (sc.choices) {
             sc.choices.forEach(ch => {
               const isSel = branch.choiceId === ch.id ? "selected" : "";
-              choiceOptions += `<option value="${ch.id}" ${isSel}>🎬 ${sc.name || sceneId} > "${ch.text}"</option>`;
+              choiceOptions += `<option value="${ch.id}" ${isSel}>${sc.name || sceneId} > "${ch.text}"</option>`;
             });
           }
         });
@@ -2370,60 +3514,52 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         const isNotSelectedOp = branch.choiceState === 'not_selected' ? 'selected' : '';
 
         conditionHtml = `
-          <span class="muted" style="font-size:0.75rem; font-weight:600; white-space:nowrap;">Choice Option:</span>
-          <select class="select-input" onchange="window.editor.updateConditionChoiceId(${index}, this.value)" style="flex-grow:1; font-size:0.8rem; padding: 4px; max-width: 250px;">
+          <select class="select-input conditional-jump-variable" aria-label="Choice option" onchange="window.editor.updateConditionChoiceId(${index}, this.value)">
             ${choiceOptions}
           </select>
-          <select class="select-input" onchange="window.editor.updateConditionChoiceState(${index}, this.value)" style="width:120px; font-size:0.8rem; padding: 4px;">
+          <select class="select-input conditional-jump-operator" aria-label="Choice state" onchange="window.editor.updateConditionChoiceState(${index}, this.value)">
             <option value="selected" ${isSelectedOp}>was selected</option>
             <option value="not_selected" ${isNotSelectedOp}>was NOT selected</option>
           </select>
         `;
       } else {
-        // Tracked numbers options
-        let numberVarOptions = `<option value="">-- Select Variable --</option>`;
-        const trackedNumbers = (this.project.config && this.project.config.trackedNumbers) || [];
-        trackedNumbers.forEach(name => {
-          const isSel = branch.variable === name ? "selected" : "";
-          numberVarOptions += `<option value="${name}" ${isSel}>📊 ${name}</option>`;
+        const definition = this.getVariableDefinition(branch.variable) || { type: 'number' };
+        const logic = window.VNFairyCore && window.VNFairyCore.logicModel;
+        const operators = logic ? logic.operatorForType(definition.type) : ['==', '!=', '>', '<', '>=', '<='];
+        let opOptions = '';
+        operators.forEach(operator => {
+          opOptions += `<option value="${operator}" ${branch.operator === operator ? 'selected' : ''}>${operator.replace('_', ' ')}</option>`;
         });
-
-        const ops = ['==', '!=', '>', '<', '>=', '<='];
-        let opOptions = "";
-        ops.forEach(op => {
-          const isSel = branch.operator === op ? "selected" : "";
-          opOptions += `<option value="${op}" ${isSel}>${op}</option>`;
-        });
-
-        conditionHtml = `
-          <span class="muted" style="font-size:0.75rem; font-weight:600; white-space:nowrap;">Variable:</span>
-          <select class="select-input" onchange="window.editor.updateConditionVar(${index}, this.value)" style="width:130px; font-size:0.8rem; padding: 4px;">
-            ${numberVarOptions}
-          </select>
-          <select class="select-input" onchange="window.editor.updateConditionOp(${index}, this.value)" style="width:70px; font-size:0.8rem; padding: 4px;">
-            ${opOptions}
-          </select>
-          <input type="number" class="input-text" placeholder="value" value="${branch.value !== undefined ? branch.value : "0"}" style="width:70px; font-size:0.8rem; padding: 4px 8px;" oninput="window.editor.updateConditionValue(${index}, this.value)">
-        `;
+        let valueEditor = '';
+        if (definition.type === 'boolean') {
+          valueEditor = `<select class="select-input branching-value branching-value-boolean" onchange="window.editor.updateConditionValue(${index}, this.value)"><option value="true" ${branch.value === true || branch.value === 'true' ? 'selected' : ''}>True</option><option value="false" ${branch.value === false || branch.value === 'false' ? 'selected' : ''}>False</option></select>`;
+        } else if (definition.type === 'inventory') {
+          valueEditor = `<input type="text" class="input-text branching-value branching-item-name" placeholder="Item name" value="${this.escapeHtml(branch.item || '')}" oninput="window.editor.updateConditionItem(${index}, this.value)"><input type="number" min="0" step="1" class="input-text branching-value branching-count" placeholder="Count" value="${this.escapeHtml(branch.value === undefined ? 1 : branch.value)}" oninput="window.editor.updateConditionValue(${index}, this.value)">`;
+        } else {
+          const inputType = definition.type === 'number' ? 'number' : 'text';
+          const max = definition.type === 'text' ? `maxlength="${window.VNFairyCore.logicModel.MAX_TEXT_LENGTH}"` : '';
+          valueEditor = `<input type="${inputType}" class="input-text branching-value" placeholder="Value" value="${this.escapeHtml(branch.value === undefined ? (definition.type === 'number' ? 0 : '') : branch.value)}" ${max} oninput="window.editor.updateConditionValue(${index}, this.value)">`;
+        }
+        conditionHtml = `<select class="select-input conditional-jump-variable" aria-label="Variable" onchange="window.editor.updateConditionVar(${index}, this.value)">${this.variableOptionsHtml(branch.variable)}</select><select class="select-input conditional-jump-operator" aria-label="Comparison" onchange="window.editor.updateConditionOp(${index}, this.value)">${opOptions}</select>${valueEditor}`;
       }
 
       card.innerHTML = `
-        <div style="display: flex; gap: 8px; align-items: center; width: 100%; flex-wrap: wrap;">
-          <span class="muted" style="font-size:0.75rem; font-weight:600;">IF</span>
-          <select class="select-input" onchange="window.editor.updateConditionType(${index}, this.value)" style="width:140px; font-size:0.8rem; padding: 4px;">
-            <option value="choice" ${selChoice}>👉 Choice Selection</option>
-            <option value="number" ${selNumber}>📊 Tracked Number</option>
+        <div class="conditional-jump-heading"><strong>Jump ${index + 1}</strong><button class="btn-danger conditional-jump-delete" aria-label="Delete conditional jump ${index + 1}" onclick="window.editor.deleteCondition(${index})">&times;</button></div>
+        <div class="conditional-jump-row conditional-jump-if-row">
+          <span class="conditional-jump-label">If</span>
+          <select class="select-input conditional-jump-type" aria-label="Requirement type" onchange="window.editor.updateConditionType(${index}, this.value)">
+            <option value="choice" ${selChoice}>Choice selection</option>
+            <option value="variable" ${selNumber}>Variable value</option>
           </select>
-          <div style="display:flex; align-items:center; gap:8px; flex-grow:1; flex-wrap: wrap;">
+          <div class="conditional-jump-fields">
             ${conditionHtml}
           </div>
         </div>
-        <div style="display: flex; gap: 8px; align-items: center; width: 100%; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 6px;">
-          <span class="muted" style="font-size:0.75rem; font-weight:600;">THEN GO TO</span>
-          <select class="select-input cond-target-select" data-asset-type="scene" onchange="window.editor.updateConditionTarget(${index}, this.value)" style="flex-grow:1; font-size:0.8rem; padding: 4px;">
+        <div class="conditional-jump-row conditional-jump-target-row">
+          <span class="conditional-jump-label">Then go to</span>
+          <select class="select-input cond-target-select" data-asset-type="scene" onchange="window.editor.updateConditionTarget(${index}, this.value)">
             ${targetOptions}
           </select>
-          <button class="btn-danger" style="padding: 4px 8px; font-size:0.8rem;" onclick="window.editor.deleteCondition(${index})">&times;</button>
         </div>
       `;
 
@@ -2486,7 +3622,17 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   updateConditionVar(index, val) {
     const scene = this.project.scenes[this.activeSceneId];
-    scene.conditionalBranches[index].variable = val;
+    const branch = scene.conditionalBranches[index];
+    branch.variable = val;
+    const definition = this.getVariableDefinition(val);
+    if (definition) {
+      const logic = window.VNFairyCore.logicModel;
+      const operators = logic.operatorForType(definition.type);
+      if (!operators.includes(branch.operator)) branch.operator = operators[0];
+      branch.value = definition.type === 'boolean' ? false : definition.type === 'number' || definition.type === 'inventory' ? 0 : '';
+      if (definition.type !== 'inventory') delete branch.item;
+    }
+    this.renderConditionalBranches();
     this.triggerAutoSave();
   }
 
@@ -2498,8 +3644,22 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   updateConditionValue(index, val) {
     const scene = this.project.scenes[this.activeSceneId];
-    const parsed = Number(val);
-    scene.conditionalBranches[index].value = isNaN(parsed) ? 0 : parsed;
+    const branch = scene.conditionalBranches[index];
+    const definition = this.getVariableDefinition(branch.variable);
+    if ((definition && definition.type === 'number') || branch.type === 'number') {
+      const parsed = Number(val);
+      branch.value = isNaN(parsed) ? 0 : parsed;
+    } else if (definition && definition.type === 'boolean') {
+      branch.value = val === true || val === 'true';
+    } else {
+      branch.value = String(val).slice(0, window.VNFairyCore.logicModel.MAX_TEXT_LENGTH);
+    }
+    this.triggerAutoSave();
+  }
+
+  updateConditionItem(index, val) {
+    const scene = this.project.scenes[this.activeSceneId];
+    scene.conditionalBranches[index].item = String(val).slice(0, 120);
     this.triggerAutoSave();
   }
 
@@ -2509,27 +3669,29 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     this.triggerAutoSave();
   }
 
-  // Render tracked numbers list in settings tab
+  // Render project-wide typed variable definitions in settings.
   renderTrackedNumbersList() {
     const list = document.getElementById('settings-tracked-numbers-list');
     if (!list) return;
     list.innerHTML = "";
 
-    this.project.config.trackedNumbers = this.project.config.trackedNumbers || [];
-    this.project.config.trackedNumbers.forEach((name) => {
+    this.getVariableDefinitions().forEach((definition) => {
       const item = document.createElement('div');
       item.style.display = "flex";
       item.style.justifyContent = "space-between";
       item.style.alignItems = "center";
+      item.style.gap = "8px";
+      item.style.flexWrap = "wrap";
       item.style.background = "rgba(255,255,255,0.02)";
       item.style.border = "1px solid var(--border-color)";
       item.style.borderRadius = "var(--radius-sm)";
       item.style.padding = "6px 12px";
 
-      item.innerHTML = `
-        <span style="font-weight:600; color:var(--text-main); font-size:0.85rem;">📊 ${name}</span>
-        <button class="btn-danger" style="padding: 4px 8px; font-size:0.8rem;" onclick="window.editor.deleteTrackedNumber('${name}')">&times;</button>
-      `;
+      const defaultText = definition.type === 'inventory'
+        ? Object.entries(definition.default || {}).map(([name, count]) => `${name}:${count}`).join(', ')
+        : String(definition.default);
+      const typeOptions = ['number', 'boolean', 'text', 'inventory'].map(type => `<option value="${type}" ${definition.type === type ? 'selected' : ''}>${type}</option>`).join('');
+      item.innerHTML = `<div style="min-width:130px; flex:1;"><strong style="color:var(--text-main); font-size:0.85rem;">${this.escapeHtml(definition.name)}</strong><div class="muted" style="font-size:0.7rem; margin-top:2px;">${this.escapeHtml(definition.description || 'No description')}</div></div><select class="select-input" title="Variable type" style="width:110px; font-size:0.75rem; padding:4px;" onchange="window.editor.updateProjectVariableType('${this.escapeHtml(definition.name)}', this.value)">${typeOptions}</select><input type="text" class="input-text" value="${this.escapeHtml(defaultText)}" title="Default value" placeholder="Default" style="width:150px; font-size:0.75rem; padding:4px 8px;" onchange="window.editor.updateProjectVariableDefault('${this.escapeHtml(definition.name)}', this.value)"><input type="text" class="input-text" value="${this.escapeHtml(definition.description)}" title="Description" placeholder="Description" style="width:190px; font-size:0.75rem; padding:4px 8px;" onchange="window.editor.updateProjectVariableDescription('${this.escapeHtml(definition.name)}', this.value)"><button class="btn-danger" style="padding:4px 8px; font-size:0.8rem;" onclick="window.editor.deleteTrackedNumber('${this.escapeHtml(definition.name)}')">&times;</button>`;
       list.appendChild(item);
     });
   }
@@ -2542,21 +3704,80 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       alert("Please enter a valid alphanumeric variable name.");
       return;
     }
-    this.project.config.trackedNumbers = this.project.config.trackedNumbers || [];
-    if (this.project.config.trackedNumbers.includes(name)) {
-      alert("A tracked variable with this name already exists.");
+    const definitions = this.getVariableDefinitions();
+    if (definitions.some(definition => definition.name === name)) {
+      alert("A project variable with this name already exists.");
       return;
     }
-    this.project.config.trackedNumbers.push(name);
+    const type = document.getElementById('settings-new-variable-type')?.value || 'number';
+    const defaultInput = document.getElementById('settings-new-variable-default');
+    const descriptionInput = document.getElementById('settings-new-variable-description');
+    const defaultValue = this.parseProjectVariableDefault(type, defaultInput ? defaultInput.value : '');
+    this.project.config.variables.push({ name, type, default: defaultValue, description: descriptionInput ? descriptionInput.value.trim() : '' });
+    if (type === 'number') {
+      this.project.config.trackedNumbers = this.project.config.trackedNumbers || [];
+      if (!this.project.config.trackedNumbers.includes(name)) this.project.config.trackedNumbers.push(name);
+    }
     input.value = "";
+    if (defaultInput) defaultInput.value = "";
+    if (descriptionInput) descriptionInput.value = "";
     this.renderTrackedNumbersList();
+    this.renderChoicesBuilder();
+    this.renderConditionalBranches();
+    this.triggerAutoSave();
+  }
+
+  parseProjectVariableDefault(type, value) {
+    if (type === 'boolean') return value.trim().toLowerCase() === 'true';
+    if (type === 'number') return Number.isFinite(Number(value)) ? Number(value) : 0;
+    if (type === 'inventory') {
+      const inventory = {};
+      String(value || '').split(',').forEach(part => {
+        const [rawName, rawCount] = part.split(':');
+        const item = String(rawName || '').trim().slice(0, 120);
+        const count = Math.max(0, Math.floor(Number(rawCount === undefined ? 1 : rawCount) || 0));
+        if (item && count > 0) inventory[item] = count;
+      });
+      return inventory;
+    }
+    return String(value || '').slice(0, window.VNFairyCore.logicModel.MAX_TEXT_LENGTH);
+  }
+
+  updateProjectVariableDefault(name, value) {
+    const definition = this.getVariableDefinition(name);
+    if (!definition) return;
+    definition.default = this.parseProjectVariableDefault(definition.type, value);
+    this.triggerAutoSave();
+  }
+
+  updateProjectVariableType(name, type) {
+    const definition = this.getVariableDefinition(name);
+    if (!definition || !window.VNFairyCore.logicModel.VARIABLE_TYPES.includes(type)) return;
+    const previousDefault = definition.default;
+    definition.type = type;
+    definition.default = window.VNFairyCore.logicModel.normalizeDefinition({ ...definition, type, default: previousDefault }).default;
+    this.project.config.trackedNumbers = this.project.config.trackedNumbers || [];
+    if (type === 'number' && !this.project.config.trackedNumbers.includes(name)) this.project.config.trackedNumbers.push(name);
+    if (type !== 'number') this.project.config.trackedNumbers = this.project.config.trackedNumbers.filter(existing => existing !== name);
+    this.renderTrackedNumbersList();
+    this.renderChoicesBuilder();
+    this.renderConditionalBranches();
+    this.triggerAutoSave();
+  }
+
+  updateProjectVariableDescription(name, value) {
+    const definition = this.getVariableDefinition(name);
+    if (!definition) return;
+    definition.description = String(value || '').trim().slice(0, window.VNFairyCore.logicModel.MAX_DESCRIPTION_LENGTH);
     this.triggerAutoSave();
   }
 
   deleteTrackedNumber(name) {
-    this.project.config.trackedNumbers = this.project.config.trackedNumbers || [];
-    this.project.config.trackedNumbers = this.project.config.trackedNumbers.filter(n => n !== name);
+    this.project.config.variables = this.getVariableDefinitions().filter(definition => definition.name !== name);
+    this.project.config.trackedNumbers = (this.project.config.trackedNumbers || []).filter(n => n !== name);
     this.renderTrackedNumbersList();
+    this.renderChoicesBuilder();
+    this.renderConditionalBranches();
     this.triggerAutoSave();
   }
 
@@ -2633,6 +3854,12 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     const wrapper = document.getElementById('flowchart-wrapper');
     const canvas = document.getElementById('flowchart-canvas');
     const svgEl = document.getElementById('flowchart-svg');
+    if (!wrapper || !canvas || !svgEl || !this.project) return;
+
+    if (this.flowchartCleanup) {
+      this.flowchartCleanup();
+      this.flowchartCleanup = null;
+    }
 
     // Clear old content (keep SVG in place)
     Array.from(canvas.children).forEach(child => {
@@ -2640,6 +3867,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     });
     svgEl.innerHTML = '';
 
+    this.project.config = this.project.config || {};
     const scenes = this.project.scenes || {};
     const sceneIds = Object.keys(scenes);
     if (!sceneIds.length) return;
@@ -2701,6 +3929,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
     // Compute positions
     const pos = {}; // id -> {x, y, w, h}
+    const savedPositions = this.project.config.flowchartPositions || {};
     let curX = PAD;
     colKeys.forEach(col => {
       const colNodes = cols[col];
@@ -2711,7 +3940,14 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         const choiceCount = (scene.choices && scene.choices.length) ? scene.choices.length : 0;
         const conditionCount = (scene.conditionalBranches && scene.conditionalBranches.length) ? scene.conditionalBranches.length : 0;
         const h = NODE_H_BASE + (choiceCount + conditionCount) * 18;
-        pos[id] = { x: curX, y: curY, w: NODE_W, h };
+        const saved = savedPositions[id];
+        const hasSavedPosition = saved && Number.isFinite(Number(saved.x)) && Number.isFinite(Number(saved.y));
+        pos[id] = {
+          x: hasSavedPosition ? Math.max(20, Number(saved.x)) : curX,
+          y: hasSavedPosition ? Math.max(20, Number(saved.y)) : curY,
+          w: NODE_W,
+          h
+        };
         curY += h + GAP_Y;
       });
       curX += NODE_W + GAP_X;
@@ -2737,8 +3973,13 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       node.style.left = x + 'px';
       node.style.top = y + 'px';
       node.style.width = w + 'px';
+      node.title = 'Drag to reposition · Click to edit this scene';
       node.onclick = (e) => {
         e.stopPropagation();
+        if (node._suppressClick) {
+          node._suppressClick = false;
+          return;
+        }
         switchWorkspaceView('timeline-view');
         this.selectScene(id);
       };
@@ -2781,58 +4022,319 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         ${connectionsHtml ? `<div class="flowchart-node-connections">${connectionsHtml}</div>` : ''}
       `;
       canvas.appendChild(node);
+      pos[id].w = node.offsetWidth || pos[id].w;
+      pos[id].h = node.offsetHeight || pos[id].h;
       nodeEls[id] = node;
     });
 
-    // Draw SVG arrows using canvas-relative coordinates (pos already in canvas space)
-    const svgNS = 'http://www.w3.org/2000/svg';
-    // Arrow marker
-    const defs = document.createElementNS(svgNS, 'defs');
-    const marker = document.createElementNS(svgNS, 'marker');
-    marker.setAttribute('id', 'fc-arrow');
-    marker.setAttribute('markerWidth', '8');
-    marker.setAttribute('markerHeight', '6');
-    marker.setAttribute('refX', '8');
-    marker.setAttribute('refY', '3');
-    marker.setAttribute('orient', 'auto');
-    const arrowPath = document.createElementNS(svgNS, 'path');
-    arrowPath.setAttribute('d', 'M0,0 L8,3 L0,6 Z');
-    arrowPath.setAttribute('fill', 'var(--accent)');
-    marker.appendChild(arrowPath);
-    defs.appendChild(marker);
-    svgEl.appendChild(defs);
-
-    // Size the SVG to cover all content
-    const totalW = curX + PAD;
-    let totalH = PAD;
-    Object.values(pos).forEach(p => { totalH = Math.max(totalH, p.y + p.h + PAD); });
-    svgEl.setAttribute('width', totalW);
-    svgEl.setAttribute('height', totalH);
-    svgEl.style.width = totalW + 'px';
-    svgEl.style.height = totalH + 'px';
-
-    // Draw connections as bezier curves
+    // Build a single edge list for the routed connectors.
+    const edges = [];
     sceneIds.forEach(sourceId => {
       const source = scenes[sourceId];
-      const sp = pos[sourceId];
-      if (!sp) return;
-      let targets = [];
-      if (!source.isEnding) {
-        if (source.nextSceneId) targets.push({ id: source.nextSceneId, label: '' });
-        if (source.choices) source.choices.forEach(c => { if (c.target) targets.push({ id: c.target, label: c.text }); });
-        if (source.conditionalBranches) source.conditionalBranches.forEach(b => { if (b.target) targets.push({ id: b.target, label: `If ${b.variable}` }); });
+      if (!source || source.isEnding) return;
+      if (source.nextSceneId) edges.push({ sourceId, targetId: source.nextSceneId });
+      if (source.choices) {
+        source.choices.forEach(choice => {
+          if (choice.target) edges.push({ sourceId, targetId: choice.target });
+        });
       }
-      targets.forEach(({ id: targetId, label }) => {
-        const tp = pos[targetId];
-        if (!tp) return;
-        // Connect right-middle of source to left-middle of target
-        const x1 = sp.x + sp.w;
-        const y1 = sp.y + sp.h / 2;
-        const x2 = tp.x;
-        const y2 = tp.y + tp.h / 2;
-        const cx = (x1 + x2) / 2;
+      if (source.conditionalBranches) {
+        source.conditionalBranches.forEach(branch => {
+          if (branch.target) edges.push({ sourceId, targetId: branch.target });
+        });
+      }
+    });
+    const defaultExpressionSelect = document.getElementById('char-default-expression-select');
+    const defaultExpression = defaultExpressionSelect?.value || sprites[0]?.id || '';
+
+    const ROUTE_GAP = 24;
+    const ROUTE_BEND_RADIUS = 9;
+    const svgNS = 'http://www.w3.org/2000/svg';
+
+    const isInside = (point, rect) => (
+      point.x > rect.left + 0.5 && point.x < rect.right - 0.5 &&
+      point.y > rect.top + 0.5 && point.y < rect.bottom - 0.5
+    );
+
+    const segmentClear = (a, b, obstacles) => {
+      const horizontal = Math.abs(a.y - b.y) < 0.5;
+      const vertical = Math.abs(a.x - b.x) < 0.5;
+      if (!horizontal && !vertical) return false;
+
+      for (const rect of obstacles) {
+        if (horizontal && a.y > rect.top && a.y < rect.bottom) {
+          const left = Math.min(a.x, b.x);
+          const right = Math.max(a.x, b.x);
+          if (right > rect.left && left < rect.right) return false;
+        }
+        if (vertical && a.x > rect.left && a.x < rect.right) {
+          const top = Math.min(a.y, b.y);
+          const bottom = Math.max(a.y, b.y);
+          if (bottom > rect.top && top < rect.bottom) return false;
+        }
+      }
+      return true;
+    };
+
+    const uniqueNumbers = values => Array.from(new Set(values.map(value => Number(value.toFixed(2)))));
+
+    // Route across a visibility grid made from tile edges. The grid is small
+    // because it only contains coordinates at the sides of existing tiles.
+    const findOrthogonalRoute = (start, end, obstacles) => {
+      const xs = uniqueNumbers([
+        start.x,
+        end.x,
+        ...obstacles.flatMap(rect => [rect.left, rect.right])
+      ]);
+      const ys = uniqueNumbers([
+        start.y,
+        end.y,
+        ...obstacles.flatMap(rect => [rect.top, rect.bottom])
+      ]);
+      const points = [];
+      const pointIndex = new Map();
+
+      xs.forEach(x => ys.forEach(y => {
+        const point = { x, y };
+        if (obstacles.some(rect => isInside(point, rect))) return;
+        const key = `${x}|${y}`;
+        pointIndex.set(key, points.length);
+        points.push({ x, y });
+      }));
+
+      const startIndex = pointIndex.get(`${start.x}|${start.y}`);
+      const endIndex = pointIndex.get(`${end.x}|${end.y}`);
+      if (startIndex === undefined || endIndex === undefined) return null;
+
+      const neighbours = points.map(() => []);
+      const addNeighbourSegments = (groups, direction) => {
+        groups.forEach(group => {
+          group.sort((a, b) => direction === 0 ? a.x - b.x : a.y - b.y);
+          for (let index = 1; index < group.length; index++) {
+            const a = group[index - 1];
+            const b = group[index];
+            if (!segmentClear(a.point, b.point, obstacles)) continue;
+            const distance = Math.abs(direction === 0 ? b.point.x - a.point.x : b.point.y - a.point.y);
+            neighbours[a.index].push({ index: b.index, direction, distance });
+            neighbours[b.index].push({ index: a.index, direction, distance });
+          }
+        });
+      };
+
+      const rows = new Map();
+      const columns = new Map();
+      points.forEach((point, index) => {
+        const rowKey = point.y.toFixed(2);
+        const columnKey = point.x.toFixed(2);
+        if (!rows.has(rowKey)) rows.set(rowKey, []);
+        if (!columns.has(columnKey)) columns.set(columnKey, []);
+        rows.get(rowKey).push({ point, index });
+        columns.get(columnKey).push({ point, index });
+      });
+      addNeighbourSegments(Array.from(rows.values()), 0);
+      addNeighbourSegments(Array.from(columns.values()), 1);
+
+      const heap = [];
+      const pushHeap = item => {
+        heap.push(item);
+        let index = heap.length - 1;
+        while (index > 0) {
+          const parent = Math.floor((index - 1) / 2);
+          if (heap[parent].priority <= item.priority) break;
+          heap[index] = heap[parent];
+          index = parent;
+        }
+        heap[index] = item;
+      };
+      const popHeap = () => {
+        if (!heap.length) return null;
+        const result = heap[0];
+        const last = heap.pop();
+        if (heap.length && last) {
+          let index = 0;
+          while (true) {
+            const left = index * 2 + 1;
+            const right = left + 1;
+            let child = index;
+            if (left < heap.length && heap[left].priority < heap[child].priority) child = left;
+            if (right < heap.length && heap[right].priority < heap[child].priority) child = right;
+            if (child === index) break;
+            heap[index] = heap[child];
+            index = child;
+          }
+          heap[index] = last;
+        }
+        return result;
+      };
+
+      const stateKey = (index, direction) => index * 3 + direction;
+      const distance = new Map();
+      const previous = new Map();
+      const initialState = stateKey(startIndex, 2);
+      distance.set(initialState, 0);
+      pushHeap({ state: initialState, priority: 0 });
+      let finalState = null;
+
+      while (heap.length) {
+        const current = popHeap();
+        if (!current) break;
+        const currentCost = distance.get(current.state);
+        if (currentCost === undefined) continue;
+        const currentIndex = Math.floor(current.state / 3);
+        const currentDirection = current.state % 3;
+        if (currentIndex === endIndex) {
+          finalState = current.state;
+          break;
+        }
+
+        for (const neighbour of neighbours[currentIndex]) {
+          const nextState = stateKey(neighbour.index, neighbour.direction);
+          const bendPenalty = currentDirection !== 2 && currentDirection !== neighbour.direction ? 70 : 0;
+          const nextCost = currentCost + neighbour.distance + bendPenalty;
+          if (nextCost >= (distance.get(nextState) ?? Infinity)) continue;
+          distance.set(nextState, nextCost);
+          previous.set(nextState, current.state);
+          const nextPoint = points[neighbour.index];
+          const heuristic = Math.abs(nextPoint.x - end.x) + Math.abs(nextPoint.y - end.y);
+          pushHeap({ state: nextState, priority: nextCost + heuristic });
+        }
+      }
+
+      if (finalState === null) return null;
+      const route = [];
+      let state = finalState;
+      while (state !== undefined) {
+        route.unshift(points[Math.floor(state / 3)]);
+        state = previous.get(state);
+      }
+      return route;
+    };
+
+    const simplifyRoute = points => points.filter((point, index) => {
+      if (index === 0 || index === points.length - 1) return true;
+      const previousPoint = points[index - 1];
+      const nextPoint = points[index + 1];
+      const vertical = Math.abs(previousPoint.x - point.x) < 0.5 && Math.abs(point.x - nextPoint.x) < 0.5;
+      const horizontal = Math.abs(previousPoint.y - point.y) < 0.5 && Math.abs(point.y - nextPoint.y) < 0.5;
+      return !vertical && !horizontal;
+    });
+
+    const createRoundedPath = points => {
+      if (points.length < 2) return '';
+      let path = `M${points[0].x},${points[0].y}`;
+      for (let index = 1; index < points.length; index++) {
+        const current = points[index];
+        const previousPoint = points[index - 1];
+        const nextPoint = points[index + 1];
+        const isTurn = !!nextPoint && (
+          (Math.abs(previousPoint.x - current.x) > 0.5 && Math.abs(current.y - nextPoint.y) > 0.5) ||
+          (Math.abs(previousPoint.y - current.y) > 0.5 && Math.abs(current.x - nextPoint.x) > 0.5)
+        );
+        if (!isTurn) {
+          path += ` L${current.x},${current.y}`;
+          continue;
+        }
+
+        const beforeDistance = Math.min(ROUTE_BEND_RADIUS, Math.abs(previousPoint.x - current.x) + Math.abs(previousPoint.y - current.y) / 2);
+        const afterDistance = Math.min(ROUTE_BEND_RADIUS, Math.abs(nextPoint.x - current.x) + Math.abs(nextPoint.y - current.y) / 2);
+        const before = {
+          x: current.x + Math.sign(previousPoint.x - current.x) * (previousPoint.x !== current.x ? beforeDistance : 0),
+          y: current.y + Math.sign(previousPoint.y - current.y) * (previousPoint.y !== current.y ? beforeDistance : 0)
+        };
+        const after = {
+          x: current.x + Math.sign(nextPoint.x - current.x) * (nextPoint.x !== current.x ? afterDistance : 0),
+          y: current.y + Math.sign(nextPoint.y - current.y) * (nextPoint.y !== current.y ? afterDistance : 0)
+        };
+        path += ` L${before.x},${before.y} Q${current.x},${current.y} ${after.x},${after.y}`;
+      }
+      return path;
+    };
+
+    const getFlowchartPorts = (sourcePosition, targetPosition) => {
+      const sourceCenter = { x: sourcePosition.x + sourcePosition.w / 2, y: sourcePosition.y + sourcePosition.h / 2 };
+      const targetCenter = { x: targetPosition.x + targetPosition.w / 2, y: targetPosition.y + targetPosition.h / 2 };
+      const dx = targetCenter.x - sourceCenter.x;
+      const dy = targetCenter.y - sourceCenter.y;
+      const useHorizontal = Math.abs(dx) >= Math.abs(dy);
+
+      if (useHorizontal) {
+        const toRight = dx >= 0;
+        const direction = toRight ? 1 : -1;
+        const sourceAnchor = { x: toRight ? sourcePosition.x + sourcePosition.w : sourcePosition.x, y: sourceCenter.y };
+        const targetAnchor = { x: toRight ? targetPosition.x : targetPosition.x + targetPosition.w, y: targetCenter.y };
+        return {
+          sourceAnchor,
+          targetAnchor,
+          start: { x: sourceAnchor.x + direction * ROUTE_GAP, y: sourceAnchor.y },
+          end: { x: targetAnchor.x - direction * ROUTE_GAP, y: targetAnchor.y }
+        };
+      }
+
+      const below = dy >= 0;
+      const direction = below ? 1 : -1;
+      const sourceAnchor = { x: sourceCenter.x, y: below ? sourcePosition.y + sourcePosition.h : sourcePosition.y };
+      const targetAnchor = { x: targetCenter.x, y: below ? targetPosition.y : targetPosition.y + targetPosition.h };
+      return {
+        sourceAnchor,
+        targetAnchor,
+        start: { x: sourceAnchor.x, y: sourceAnchor.y + direction * ROUTE_GAP },
+        end: { x: targetAnchor.x, y: targetAnchor.y - direction * ROUTE_GAP }
+      };
+    };
+
+    const getObstacles = () => Object.values(pos).map(position => ({
+      left: position.x - ROUTE_GAP,
+      top: position.y - ROUTE_GAP,
+      right: position.x + position.w + ROUTE_GAP,
+      bottom: position.y + position.h + ROUTE_GAP
+    }));
+
+    const updateCanvasBounds = () => {
+      const maxX = Math.max(wrapper.clientWidth, ...Object.values(pos).map(position => position.x + position.w + PAD));
+      const maxY = Math.max(wrapper.clientHeight, ...Object.values(pos).map(position => position.y + position.h + PAD));
+      canvas.style.width = `${maxX}px`;
+      canvas.style.height = `${maxY}px`;
+      svgEl.setAttribute('width', maxX);
+      svgEl.setAttribute('height', maxY);
+      svgEl.style.width = `${maxX}px`;
+      svgEl.style.height = `${maxY}px`;
+    };
+
+    const drawConnections = () => {
+      svgEl.innerHTML = '';
+      const defs = document.createElementNS(svgNS, 'defs');
+      const marker = document.createElementNS(svgNS, 'marker');
+      marker.setAttribute('id', 'fc-arrow');
+      marker.setAttribute('markerWidth', '8');
+      marker.setAttribute('markerHeight', '6');
+      marker.setAttribute('refX', '8');
+      marker.setAttribute('refY', '3');
+      marker.setAttribute('orient', 'auto');
+      const arrowPath = document.createElementNS(svgNS, 'path');
+      arrowPath.setAttribute('d', 'M0,0 L8,3 L0,6 Z');
+      arrowPath.setAttribute('fill', 'var(--accent)');
+      marker.appendChild(arrowPath);
+      defs.appendChild(marker);
+      svgEl.appendChild(defs);
+
+      const obstacles = getObstacles();
+      edges.forEach(edge => {
+        const sourcePosition = pos[edge.sourceId];
+        const targetPosition = pos[edge.targetId];
+        if (!sourcePosition || !targetPosition) return;
+
+        const ports = getFlowchartPorts(sourcePosition, targetPosition);
+        const routed = findOrthogonalRoute(ports.start, ports.end, obstacles);
+        const route = simplifyRoute([
+          ports.sourceAnchor,
+          ports.start,
+          ...(routed || [ports.end]),
+          ports.end,
+          ports.targetAnchor
+        ]);
         const pathEl = document.createElementNS(svgNS, 'path');
-        pathEl.setAttribute('d', `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`);
+        pathEl.classList.add('flowchart-edge');
+        pathEl.setAttribute('d', createRoundedPath(route));
         pathEl.setAttribute('fill', 'none');
         pathEl.setAttribute('stroke', 'var(--accent)');
         pathEl.setAttribute('stroke-width', '2');
@@ -2840,52 +4342,122 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         pathEl.setAttribute('marker-end', 'url(#fc-arrow)');
         svgEl.appendChild(pathEl);
       });
-    });
+    };
 
-    // --- Zoom & Pan (transform canvas only — SVG is inside canvas so moves with it) ---
-    // Remove old listeners by cloning the wrapper
+    updateCanvasBounds();
+    drawConnections();
+
+    // --- Zoom, pan, and tile dragging ---
     const newWrapper = wrapper.cloneNode(false);
     wrapper.parentNode.replaceChild(newWrapper, wrapper);
     newWrapper.appendChild(canvas);
 
     let scale = 1, offsetX = PAD / 2, offsetY = PAD / 2;
-    function applyTransform() {
+    const applyTransform = () => {
       canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
-    }
+    };
     applyTransform();
 
-    newWrapper.addEventListener('wheel', e => {
-      e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    Object.entries(nodeEls).forEach(([id, node]) => {
+      let activePointerId = null;
+      let pointerStart = null;
+      let dragStart = null;
+      let didDrag = false;
+
+      node.addEventListener('mousedown', event => event.stopPropagation());
+      node.addEventListener('pointerdown', event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        activePointerId = event.pointerId;
+        pointerStart = { x: event.clientX, y: event.clientY };
+        dragStart = { x: pos[id].x, y: pos[id].y };
+        didDrag = false;
+        node.classList.add('dragging');
+        if (node.setPointerCapture) node.setPointerCapture(event.pointerId);
+      });
+
+      node.addEventListener('pointermove', event => {
+        if (event.pointerId !== activePointerId || !pointerStart) return;
+        const movedX = event.clientX - pointerStart.x;
+        const movedY = event.clientY - pointerStart.y;
+        if (!didDrag && Math.hypot(movedX, movedY) < 3) return;
+        didDrag = true;
+
+        const rect = newWrapper.getBoundingClientRect();
+        const pointerCanvasX = (event.clientX - rect.left - offsetX) / scale;
+        const pointerCanvasY = (event.clientY - rect.top - offsetY) / scale;
+        const startCanvasX = (pointerStart.x - rect.left - offsetX) / scale;
+        const startCanvasY = (pointerStart.y - rect.top - offsetY) / scale;
+        const grid = 8;
+        pos[id].x = Math.max(20, Math.round((dragStart.x + pointerCanvasX - startCanvasX) / grid) * grid);
+        pos[id].y = Math.max(20, Math.round((dragStart.y + pointerCanvasY - startCanvasY) / grid) * grid);
+        node.style.left = `${pos[id].x}px`;
+        node.style.top = `${pos[id].y}px`;
+        updateCanvasBounds();
+        drawConnections();
+      });
+
+      const finishDrag = event => {
+        if (event.pointerId !== activePointerId) return;
+        if (node.releasePointerCapture && node.hasPointerCapture && node.hasPointerCapture(event.pointerId)) {
+          node.releasePointerCapture(event.pointerId);
+        }
+        node.classList.remove('dragging');
+        if (didDrag) {
+          savedPositions[id] = { x: pos[id].x, y: pos[id].y };
+          this.project.config.flowchartPositions = savedPositions;
+          this.triggerAutoSave();
+          node._suppressClick = true;
+        }
+        activePointerId = null;
+        pointerStart = null;
+        dragStart = null;
+      };
+
+      node.addEventListener('pointerup', finishDrag);
+      node.addEventListener('pointercancel', finishDrag);
+    });
+
+    newWrapper.addEventListener('wheel', event => {
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.1 : 0.9;
       const newScale = Math.min(Math.max(0.2, scale * factor), 4);
       const rect = newWrapper.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      offsetX = mx - (mx - offsetX) * (newScale / scale);
-      offsetY = my - (my - offsetY) * (newScale / scale);
+      const mouseX = event.clientX - rect.left;
+      const mouseY = event.clientY - rect.top;
+      offsetX = mouseX - (mouseX - offsetX) * (newScale / scale);
+      offsetY = mouseY - (mouseY - offsetY) * (newScale / scale);
       scale = newScale;
       applyTransform();
     }, { passive: false });
 
     let isPanning = false, startX = 0, startY = 0;
-    newWrapper.addEventListener('mousedown', e => {
-      if (e.button !== 0) return;
-      isPanning = true;
-      startX = e.clientX - offsetX;
-      startY = e.clientY - offsetY;
-      newWrapper.style.cursor = 'grabbing';
-    });
-    window.addEventListener('mousemove', e => {
+    const onMouseMove = event => {
       if (!isPanning) return;
-      offsetX = e.clientX - startX;
-      offsetY = e.clientY - startY;
+      offsetX = event.clientX - startX;
+      offsetY = event.clientY - startY;
       applyTransform();
-    });
-    window.addEventListener('mouseup', () => {
+    };
+    const onMouseUp = () => {
       if (!isPanning) return;
       isPanning = false;
       newWrapper.style.cursor = 'grab';
+    };
+
+    newWrapper.addEventListener('mousedown', event => {
+      if (event.button !== 0 || event.target.closest('.flowchart-node')) return;
+      isPanning = true;
+      startX = event.clientX - offsetX;
+      startY = event.clientY - offsetY;
+      newWrapper.style.cursor = 'grabbing';
     });
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    this.flowchartCleanup = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
   }
 
 
@@ -2893,7 +4465,10 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   async testPlay() {
     
     // Save project changes before playtest
-    await this.saveProject();
+    if (!await this.saveProject()) {
+      alert('Preview was not opened because the project is not saved to disk.');
+      return;
+    }
 
     const url = `/index.html?project=${this.projectId || 'demo'}&playtest=true&_t=${Date.now()}`;
     window.open(url, '_blank');
@@ -2905,21 +4480,35 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     this.updateSaveStatus("Packaging project...");
     this.showToast("Compiling package... Please wait.", 60000);
 
-    await this.saveProject();
+    if (!await this.saveProject()) {
+      this.showToast("Export stopped: save failed", 3000);
+      return;
+    }
 
     try {
+      const checkResponse = await fetch(`/api/package/check?id=${encodeURIComponent(this.projectId || 'demo')}`);
+      const check = await checkResponse.json();
+      if (checkResponse.ok && check.success && check.warnings && check.warnings.length) {
+        const singleWarnings = check.warnings.filter(item => item.reason === 'single-asset-size').map(item => `${item.type}/${item.filename} (${this.formatAssetBytes(item.size)})`);
+        const totalWarning = check.warnings.some(item => item.reason === 'total-asset-size') ? `\nTotal uploaded media: ${this.formatAssetBytes(check.totalBytes)}` : '';
+        const message = `Some assets are large and may make the packaged game slow to download or load.${totalWarning}${singleWarnings.length ? `\n\nLarge files:\n${singleWarnings.join('\n')}` : ''}\n\nPackage anyway?`;
+        if (!confirm(message)) {
+          this.updateSaveStatus('Saved to disk');
+          this.showToast('Packaging cancelled');
+          return;
+        }
+      }
       const response = await fetch(`/api/package?id=${this.projectId || 'demo'}`, { method: 'POST' });
       if (!response.ok) throw new Error("Packaging API failed");
       const res = await response.json();
 
-      this.updateSaveStatus("All changes saved");
+      this.updateSaveStatus("Saved to disk");
       this.showToast("Game packaged! Starting download...", 4000);
 
       // Open download URL
       window.location.href = res.downloadUrl;
     } catch (e) {
       alert("Failed to package game. Running offline sandbox? Export is only supported in local server mode.");
-      this.updateSaveStatus("Saves in LocalStorage", true);
       this.showToast("Packaging failed!", 3000);
     }
   }
@@ -2955,18 +4544,91 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   bindEvents() {
     // Top Bar bindings
     document.getElementById('btn-save-project').onclick = () => this.saveProject(true);
+    document.getElementById('btn-undo').onclick = () => this.undo();
+    document.getElementById('btn-redo').onclick = () => this.redo();
+    document.getElementById('btn-restore-project').onclick = () => this.openRecoveryModal();
+    document.getElementById('btn-export-source').onclick = () => this.exportSourceProject();
     document.getElementById('btn-test-play').onclick = () => this.testPlay();
     document.getElementById('btn-package-game').onclick = () => this.packageGame();
+
+    const autoLayoutBtn = document.getElementById('btn-flowchart-auto-layout');
+    if (autoLayoutBtn) {
+      autoLayoutBtn.onclick = () => {
+        delete this.project.config.flowchartPositions;
+        this.renderFlowchart();
+        this.triggerAutoSave();
+      };
+    }
     
     const themeBtn = document.getElementById('btn-toggle-theme');
     if (themeBtn) {
       themeBtn.onclick = () => this.toggleEditorTheme();
     }
+
+    const paletteBtn = document.getElementById('btn-palette-picker');
+    if (paletteBtn) {
+      paletteBtn.onclick = (event) => {
+        event.stopPropagation();
+        this.togglePaletteMenu();
+      };
+    }
+
+    document.querySelectorAll('.palette-option').forEach((option) => {
+      option.onclick = () => {
+        // The editor palette is intentionally separate from the novel player's
+        // Interface Accent Color in Novel Settings.
+        this.applyEditorPalette(option.dataset.palette, false);
+        this.showToast(`Using ${option.dataset.palette} accent palette`);
+        const menu = document.getElementById('palette-menu');
+        const picker = document.getElementById('btn-palette-picker');
+        if (menu) menu.classList.add('hidden');
+        if (picker) picker.setAttribute('aria-expanded', 'false');
+      };
+    });
+
+    document.addEventListener('click', (event) => {
+      const picker = document.querySelector('.palette-picker');
+      const menu = document.getElementById('palette-menu');
+      const button = document.getElementById('btn-palette-picker');
+      if (picker && menu && !picker.contains(event.target)) {
+        menu.classList.add('hidden');
+        if (button) button.setAttribute('aria-expanded', 'false');
+      }
+    });
     
     const guideBtn = document.getElementById('btn-open-guide');
     if (guideBtn) {
       guideBtn.onclick = () => this.openGuideModal();
     }
+
+    const dashboardCreateBtn = document.getElementById('btn-dashboard-create');
+    if (dashboardCreateBtn) {
+      dashboardCreateBtn.onclick = () => this.openCreateProjectModal();
+    }
+
+    const dashboardImportBtn = document.getElementById('btn-dashboard-import');
+    const projectImportInput = document.getElementById('project-import-input');
+    if (dashboardImportBtn && projectImportInput) {
+      dashboardImportBtn.onclick = () => projectImportInput.click();
+      projectImportInput.onchange = () => {
+        const file = projectImportInput.files && projectImportInput.files[0];
+        if (file) this.importSourceProject(file);
+        projectImportInput.value = '';
+      };
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (!this.project || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) this.redo();
+        else this.undo();
+      } else if (key === 'y') {
+        event.preventDefault();
+        this.redo();
+      }
+    });
     
     // Back to dashboard
     const backBtn = document.getElementById('btn-back-dashboard');
@@ -2989,8 +4651,14 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       };
     }
 
-    document.getElementById('project-title-input').oninput = () => this.triggerAutoSave();
-    document.getElementById('project-author-input').oninput = () => this.triggerAutoSave();
+    document.getElementById('project-title-input').oninput = (event) => {
+      if (this.project) this.project.title = event.target.value;
+      this.triggerAutoSave();
+    };
+    document.getElementById('project-author-input').oninput = (event) => {
+      if (this.project) this.project.author = event.target.value;
+      this.triggerAutoSave();
+    };
 
     // Scene Meta inputs
     document.getElementById('scene-name-input').oninput = (e) => {
@@ -3243,6 +4911,11 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     document.getElementById('btn-add-scene-condition').onclick = () => this.addSceneCondition();
     document.getElementById('btn-add-scene').onclick = () => this.addScene();
     document.getElementById('btn-add-scene-group').onclick = () => this.addSceneGroup();
+    document.getElementById('btn-open-asset-management').onclick = () => this.openAssetManagement();
+    document.getElementById('btn-open-scene-management-sidebar').onclick = () => this.openSceneManagement();
+    document.getElementById('btn-open-scene-management').onclick = () => this.openSceneManagement();
+    document.getElementById('btn-open-scene-settings').onclick = () => this.openSceneSettings();
+    document.getElementById('btn-duplicate-scene').onclick = () => this.activeSceneId && this.duplicateScene(this.activeSceneId);
     
     // Character button
     document.getElementById('btn-add-character').onclick = () => this.openCharacterModal();
@@ -3261,6 +4934,29 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       const file = e.target.files[0];
       this.handleAssetUpload(file);
     };
+
+    const bulkUploader = document.getElementById('asset-bulk-uploader');
+    if (bulkUploader) bulkUploader.onchange = event => this.handleBulkAssetUpload(event.target.files);
+    const bulkUploadButton = document.getElementById('btn-bulk-asset-upload');
+    if (bulkUploadButton && bulkUploader) bulkUploadButton.onclick = () => bulkUploader.click();
+    const newFolderButton = document.getElementById('btn-new-asset-folder');
+    if (newFolderButton) newFolderButton.onclick = () => this.createAssetFolder();
+    document.getElementById('btn-select-visible-assets').onclick = () => this.selectVisibleAssets();
+    document.getElementById('btn-clear-asset-selection').onclick = () => this.clearAssetSelection();
+    document.getElementById('btn-apply-asset-folder').onclick = () => this.applyBulkAssetFolder();
+    document.getElementById('btn-apply-asset-tags').onclick = () => this.applyBulkAssetTags();
+    document.getElementById('btn-delete-selected-assets').onclick = () => this.deleteSelectedAssets();
+
+    document.getElementById('scene-management-search').oninput = () => this.renderSceneManagement();
+    document.getElementById('scene-management-status-filter').onchange = () => this.renderSceneManagement();
+    document.getElementById('scene-management-group-filter').onchange = () => this.renderSceneManagement();
+    document.getElementById('btn-select-visible-scenes').onclick = () => this.selectVisibleScenes();
+    document.getElementById('btn-clear-scene-selection').onclick = () => this.clearSceneSelection();
+    document.getElementById('btn-apply-scene-group').onclick = () => this.applyBulkSceneGroup();
+    document.getElementById('btn-apply-scene-status').onclick = () => this.applyBulkSceneStatus();
+    document.getElementById('btn-delete-selected-scenes').onclick = () => this.deleteSelectedScenes();
+    document.getElementById('btn-manage-add-scene').onclick = () => this.addScene();
+    document.getElementById('btn-manage-add-group').onclick = () => this.addSceneGroup();
 
 
 
@@ -3287,6 +4983,12 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           this.renderAssetsTab();
         };
       }
+    });
+    ['asset-manager-search', 'asset-manager-tag-filter', 'asset-manager-folder-filter', 'asset-manager-favorites-only', 'asset-manager-sort'].forEach(id => {
+      const elem = document.getElementById(id);
+      if (!elem) return;
+      elem.oninput = () => this.renderAssetsTab();
+      elem.onchange = () => this.renderAssetsTab();
     });
 
     // Inspector Speaker Select
@@ -3377,15 +5079,146 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           this.toggleUnlockablesToggles();
         }
         this.saveProject(true);
+        if (id === 'settings-ui-theme' && this.activeSceneId) {
+          const scene = this.project.scenes[this.activeSceneId];
+          const step = scene && scene.dialogue && this.activeStepIndex !== null ? scene.dialogue[this.activeStepIndex] : null;
+          this.renderPreview(step);
+        }
         if (id === 'settings-kinetic-mode') {
           // Refresh active scene layout because branching display gets modified
           if (this.activeSceneId) this.selectScene(this.activeSceneId);
         }
       };
       if ((elem.tagName === 'INPUT' && elem.type === 'number') || elem.tagName === 'TEXTAREA') {
-        elem.oninput = () => this.triggerAutoSave();
+        elem.oninput = () => {
+          if (id === 'settings-text-speed') this.project.config.textSpeed = parseInt(elem.value) || 40;
+          if (id === 'settings-credits-text') {
+            this.project.config.credits = this.project.config.credits || {};
+            this.project.config.credits.text = elem.value;
+          }
+          this.triggerAutoSave();
+        };
       }
     });
+  }
+
+  escapeHtml(value) {
+    const node = document.createElement('div');
+    node.textContent = String(value ?? '');
+    return node.innerHTML;
+  }
+
+  exportSourceProject(projectId = this.projectId) {
+    if (!projectId) return;
+    window.location.href = `/api/project/export?id=${encodeURIComponent(projectId)}`;
+  }
+
+  async openRecoveryModal() {
+    if (!this.projectId) return;
+    const modal = document.getElementById('project-recovery-modal');
+    const list = document.getElementById('project-recovery-list');
+    modal.classList.remove('hidden');
+    list.innerHTML = '<div class="recovery-empty">Loading previous versions…</div>';
+    try {
+      const response = await fetch(`/api/project/recovery?id=${encodeURIComponent(this.projectId)}`);
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Could not load recovery versions');
+      if (window.VNFairyEditorViews) {
+        window.VNFairyEditorViews.renderRecoveryList(list, result.snapshots, snapshotId => this.restoreProjectSnapshot(snapshotId));
+      }
+    } catch (err) {
+      list.innerHTML = `<div class="recovery-empty error">${this.escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  async restoreProjectSnapshot(snapshotId) {
+    if (!confirm('Restore this previous version? Your current version will remain available in recovery.')) return;
+    this.updateSaveStatus('Saving…');
+    try {
+      const response = await fetch(`/api/project/restore?id=${encodeURIComponent(this.projectId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ snapshotId })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Restore failed');
+      document.getElementById('project-recovery-modal').classList.add('hidden');
+      await this.refreshAssets();
+      this.finishProjectLoad(result.project, 'Saved to disk');
+      localStorage.removeItem(this.localRecoveryKey());
+      this.showToast('Previous version restored');
+    } catch (err) {
+      this.updateSaveStatus('Save failed', true);
+      alert(`Restore failed: ${err.message}`);
+    }
+  }
+
+  async importSourceProject(file) {
+    if (!file.name.toLowerCase().endsWith('.vnfairy')) {
+      alert('Choose a .vnfairy source project. Playable game ZIP files cannot be imported here.');
+      return;
+    }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+      }
+      const response = await fetch('/api/project/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: btoa(binary) })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Import failed');
+      this.showToast(`Imported ${result.title}`);
+      await this.loadProjectsList();
+    } catch (err) {
+      alert(`Import failed: ${err.message}`);
+    }
+  }
+
+  async renameProject(id, currentTitle) {
+    const title = prompt('Rename story', currentTitle);
+    if (title === null || !title.trim() || title.trim() === currentTitle) return;
+    await this.runDashboardAction(`/api/project/rename?id=${encodeURIComponent(id)}`, { title: title.trim() }, 'Story renamed');
+  }
+
+  async duplicateProject(id, currentTitle) {
+    const title = prompt('Title for the duplicate', `${currentTitle} Copy`);
+    if (title === null || !title.trim()) return;
+    await this.runDashboardAction(`/api/project/duplicate?id=${encodeURIComponent(id)}`, { title: title.trim() }, 'Story duplicated');
+  }
+
+  async setProjectArchived(id, archived) {
+    const verb = archived ? 'Archive' : 'Restore';
+    if (!confirm(`${verb} this story?`)) return;
+    await this.runDashboardAction(`/api/project/archive?id=${encodeURIComponent(id)}`, { archived }, archived ? 'Story archived' : 'Story restored');
+  }
+
+  async runDashboardAction(url, payload, successMessage) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Project action failed');
+      this.showToast(successMessage);
+      await this.loadProjectsList();
+    } catch (err) {
+      alert(`${successMessage} failed: ${err.message}`);
+    }
+  }
+
+  openCreateProjectModal() {
+    document.getElementById('project-create-id').value = "";
+    document.getElementById('project-create-title').value = "";
+    document.getElementById('project-create-author').value = "";
+    document.getElementById('project-create-modal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('project-create-title')?.focus(), 0);
   }
 
   // Fetch and display all projects on the server
@@ -3395,25 +5228,43 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     listGrid.innerHTML = "";
 
     try {
-      const response = await fetch('/api/projects');
+      const response = await fetch('/api/projects?includeArchived=1');
       if (!response.ok) throw new Error("Failed to load projects list");
       const projects = await response.json();
 
-      projects.forEach(proj => {
+      const renderSection = (sectionProjects, label) => {
+        if (!sectionProjects.length) return;
+        const heading = document.createElement('h2');
+        heading.className = 'project-section-heading';
+        heading.textContent = label;
+        listGrid.appendChild(heading);
+        sectionProjects.forEach((proj, index) => {
         const card = document.createElement('div');
-        card.className = "project-card glass-panel";
+        card.className = `project-card glass-panel${proj.archived ? ' is-archived' : ''}`;
         
         card.innerHTML = `
           <div class="project-card-header">
-            <span class="project-card-icon">📖</span>
-            <div class="project-card-title">${proj.title}</div>
-            <div class="project-card-author">by ${proj.author}</div>
+            <span class="project-card-icon">${proj.archived ? 'Archived' : `Story ${String(index + 1).padStart(2, '0')}`}</span>
+            <div class="project-card-title">${this.escapeHtml(proj.title)}</div>
+            <div class="project-card-author">by ${this.escapeHtml(proj.author)}</div>
           </div>
           <div class="project-card-actions">
-            <a href="editor.html?project=${proj.id}" class="btn-primary">Edit Story</a>
-            <a href="index.html?project=${proj.id}" target="_blank" class="btn-secondary">Play Game</a>
+            <a href="editor.html?project=${proj.id}" class="btn-primary">Open editor</a>
+            <a href="index.html?project=${proj.id}" target="_blank" class="btn-secondary">Preview</a>
+          </div>
+          <div class="project-card-secondary-actions">
+            <button type="button" data-action="rename">Rename</button>
+            <button type="button" data-action="duplicate">Duplicate</button>
+            ${proj.id !== 'demo' ? `<button type="button" data-action="archive">${proj.archived ? 'Unarchive' : 'Archive'}</button>` : ''}
+            <button type="button" data-action="export">Export source</button>
           </div>
         `;
+
+        card.querySelector('[data-action="rename"]').onclick = () => this.renameProject(proj.id, proj.title);
+        card.querySelector('[data-action="duplicate"]').onclick = () => this.duplicateProject(proj.id, proj.title);
+        const archiveButton = card.querySelector('[data-action="archive"]');
+        if (archiveButton) archiveButton.onclick = () => this.setProjectArchived(proj.id, !proj.archived);
+        card.querySelector('[data-action="export"]').onclick = () => this.exportSourceProject(proj.id);
 
         // Add delete button only if it's not the default demo project
         if (proj.id !== 'demo') {
@@ -3421,6 +5272,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           delBtn.className = "btn-delete-project";
           delBtn.innerHTML = "×";
           delBtn.title = "Delete Project";
+          delBtn.setAttribute('aria-label', `Delete ${proj.title}`);
           delBtn.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -3432,23 +5284,24 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         }
 
         listGrid.appendChild(card);
-      });
+        });
+      };
+
+      renderSection(projects.filter(project => !project.archived), 'Active stories');
+      renderSection(projects.filter(project => project.archived), 'Archived stories');
     } catch (e) {
       console.warn("Could not load projects from server.", e);
     }
 
     // Always add the "Create New Project" card at the end
-    const createCard = document.createElement('div');
+    const createCard = document.createElement('button');
     createCard.className = "create-card";
-    createCard.onclick = () => {
-      document.getElementById('project-create-id').value = "";
-      document.getElementById('project-create-title').value = "";
-      document.getElementById('project-create-author').value = "";
-      document.getElementById('project-create-modal').classList.remove('hidden');
-    };
+    createCard.type = "button";
+    createCard.onclick = () => this.openCreateProjectModal();
     createCard.innerHTML = `
-      <div class="create-card-icon">➕</div>
-      <span>Create New Story</span>
+      <div class="create-card-icon">+</div>
+      <strong>New story</strong>
+      <small>Start a blank visual novel project</small>
     `;
     listGrid.appendChild(createCard);
   }
@@ -3596,7 +5449,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   getAssetThumbHtml(assetType, value, select) {
     if (!value) {
-      return `<div class="select-preview-thumb muted">❌</div>`;
+      return `<div class="select-preview-thumb muted">—</div>`;
     }
     
     const projectId = this.projectId || 'demo';
@@ -3605,30 +5458,36 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       if (value.includes('/bg/') || value.includes('/char/')) {
         return `<div class="select-preview-thumb" style="background-image: url('${value}');"></div>`;
       } else if (value.includes('/music/')) {
-        return `<div class="select-preview-thumb">🎵</div>`;
+        return `<div class="select-preview-thumb">M</div>`;
       } else if (value.includes('/sound/')) {
-        return `<div class="select-preview-thumb">🔊</div>`;
+        return `<div class="select-preview-thumb">S</div>`;
       }
     }
     
     if (assetType === 'bg') {
+      if (value === '__solid_white__') {
+        return `<div class="select-preview-thumb solid-white-preview" title="Solid white background"></div>`;
+      }
       const file = (this.assets.bg || []).find(f => f.replace(/\.[^/.]+$/, "") === value);
       if (file) {
         const path = `data/projects/${projectId}/assets/bg/${file}`;
         return `<div class="select-preview-thumb" style="background-image: url('${path}');"></div>`;
       }
     } else if (assetType === 'music') {
-      return `<div class="select-preview-thumb">🎵</div>`;
+      return `<div class="select-preview-thumb">M</div>`;
     } else if (assetType === 'sound') {
-      return `<div class="select-preview-thumb">🔊</div>`;
+      return `<div class="select-preview-thumb">S</div>`;
     } else if (assetType === 'video') {
-      return `<div class="select-preview-thumb">🎥</div>`;
-    } else if (assetType === 'char') {
+      return `<div class="select-preview-thumb">V</div>`;
+    } else if (assetType === 'char' || assetType === 'speaker') {
+      if (assetType === 'speaker' && value === 'narrator') {
+        return `<div class="select-preview-thumb speaker-narrator-thumb">N</div>`;
+      }
       const char = (this.project.assets.characters || []).find(c => c.id === value);
       if (char && char.sprites && char.sprites.length > 0) {
         return `<div class="select-preview-thumb" style="background-image: url('${char.sprites[0].path}'); background-size: contain; background-repeat: no-repeat;"></div>`;
       }
-      return `<div class="select-preview-thumb">👤</div>`;
+      return `<div class="select-preview-thumb">C</div>`;
     } else if (assetType === 'expression') {
       const pos = select.getAttribute('data-slot-pos');
       const charSelect = document.getElementById(`slot-${pos}-char`);
@@ -3652,10 +5511,10 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           return `<div class="select-preview-thumb" style="background-image: url('${path}');"></div>`;
         }
       }
-      return `<div class="select-preview-thumb">🎬</div>`;
+      return `<div class="select-preview-thumb">SC</div>`;
     }
     
-    return `<div class="select-preview-thumb">📄</div>`;
+    return `<div class="select-preview-thumb">F</div>`;
   }
 
   openUniversalSelectModal(select) {
@@ -3677,6 +5536,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     else if (assetType === 'sound') titleText = "Select Sound / Voice Clip";
     else if (assetType === 'video') titleText = "Select Video Cutscene";
     else if (assetType === 'char') titleText = "Select Character";
+    else if (assetType === 'speaker') titleText = "Select Speaker";
     else if (assetType === 'expression') titleText = "Select Character Expression";
     else if (assetType === 'char-sprite-file') titleText = "Select Sprite Image File";
     else if (assetType === 'scene') titleText = "Select Destination Scene";
@@ -3684,7 +5544,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     title.innerText = titleText;
     
     const searchInput = document.getElementById('universal-search-input');
-    searchInput.placeholder = `Search ${titleText.toLowerCase()}...`;
+    searchInput.placeholder = assetType === 'speaker' ? 'Search speakers...' : `Search ${titleText.toLowerCase()}...`;
     searchInput.value = "";
     
     const uploadBtn = document.getElementById('universal-upload-btn');
@@ -3720,7 +5580,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     const list = document.getElementById('universal-modal-list');
     list.innerHTML = "";
     
-    const options = Array.from(select.options);
+    const options = Array.from(select.options).filter(option => assetType !== 'speaker' || option.value);
     const filteredOptions = options.filter(opt => 
       opt.text.toLowerCase().includes(filter.toLowerCase()) || 
       opt.value.toLowerCase().includes(filter.toLowerCase())
@@ -3737,7 +5597,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     }
     
     const modalContent = document.querySelector('#universal-select-modal .modal-content');
-    if (['bg', 'char', 'expression', 'char-sprite-file', 'scene'].includes(assetType)) {
+    if (['bg', 'char', 'speaker', 'expression', 'char-sprite-file', 'scene'].includes(assetType)) {
       modalContent.style.maxWidth = '750px';
       list.style.display = 'grid';
       list.style.gridTemplateColumns = 'repeat(auto-fill, minmax(160px, 1fr))';
@@ -3762,6 +5622,9 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       const projectId = this.projectId || 'demo';
       
       if (assetType === 'bg') {
+        if (val === '__solid_white__') {
+          previewHtml = `<div class="universal-card-preview-image solid-white-preview" aria-label="Solid white background"></div>`;
+        } else {
         const file = (this.assets.bg || []).find(f => f.replace(/\.[^/.]+$/, "") === val);
         if (file) {
           const path = `data/projects/${projectId}/assets/bg/${file}`;
@@ -3769,12 +5632,17 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         } else {
           previewHtml = `<div class="universal-card-preview-image empty-preview">🚫</div>`;
         }
-      } else if (assetType === 'char') {
+        }
+      } else if (assetType === 'char' || assetType === 'speaker') {
+        if (assetType === 'speaker' && val === 'narrator') {
+          previewHtml = `<div class="universal-card-preview-image empty-preview speaker-narrator-preview">N</div>`;
+        } else {
         const char = (this.project.assets.characters || []).find(c => c.id === val);
         if (char && char.sprites && char.sprites.length > 0) {
           previewHtml = `<div class="universal-card-preview-image char-preview" style="background-image: url('${char.sprites[0].path}'); background-size: contain;"></div>`;
         } else {
           previewHtml = `<div class="universal-card-preview-image empty-preview">👤</div>`;
+        }
         }
       } else if (assetType === 'expression') {
         const pos = select.getAttribute('data-slot-pos');
@@ -3823,7 +5691,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         }
       }
       
-      if (['bg', 'char', 'expression', 'char-sprite-file', 'scene'].includes(assetType)) {
+      if (['bg', 'char', 'speaker', 'expression', 'char-sprite-file', 'scene'].includes(assetType)) {
         card.style.flexDirection = 'column';
         card.style.alignItems = 'stretch';
         card.style.padding = '8px';
@@ -4196,6 +6064,21 @@ function switchSidebarTab(tabId) {
   });
 }
 
+function switchManagementTab(scopeId, panelId) {
+  const scope = document.getElementById(scopeId);
+  if (!scope) return;
+  scope.querySelectorAll('.management-tab').forEach(button => {
+    const active = button.dataset.managementTarget === panelId;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  scope.querySelectorAll('.management-tab[data-management-target]').forEach(button => {
+    const panel = document.getElementById(button.dataset.managementTarget);
+    if (panel) panel.classList.toggle('hidden', button.dataset.managementTarget !== panelId);
+  });
+  if (scopeId === 'asset-management' && window.editor) window.editor.updateAssetSelectionUI();
+}
+
 // Workspace Tabs switcher
 function switchWorkspaceView(viewId) {
   const views = ['timeline-view', 'flowchart-view', 'unlockables-view', 'settings-view'];
@@ -4227,6 +6110,10 @@ function closeTestPlay() {
 
 // Global modal closer
 function closeModal(id) {
+  if (window.VNFairyModalControls) {
+    window.VNFairyModalControls.close(id);
+    return;
+  }
   if (window.editor) window.editor.playSynthSFX('click');
   document.getElementById(id).classList.add('hidden');
 }
@@ -4246,23 +6133,8 @@ function triggerExpressionUpload(btn) {
     
     if (window.editor) {
       window.editor.updateSaveStatus("Uploading character art...");
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64Data = e.target.result;
-        try {
-          const response = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: file.name,
-              type: 'char',
-              project: window.editor.projectId || 'demo',
-              data: base64Data
-            })
-          });
-          
-          const res = await response.json();
-          if (!res.success) throw new Error(res.error);
+      try {
+          await window.editor.uploadFileToServer(file, 'char');
           
           window.editor.showToast("Sprite uploaded successfully!");
           await window.editor.refreshAssets();
@@ -4276,13 +6148,11 @@ function triggerExpressionUpload(btn) {
           });
           select.innerHTML = spriteOptions;
           window.editor.convertSelect(select);
-        } catch (err) {
+      } catch (err) {
           alert("Upload failed: " + err.message);
-        } finally {
-          window.editor.updateSaveStatus("All changes saved");
-        }
-      };
-      reader.readAsDataURL(file);
+      } finally {
+          window.editor.updateSaveStatus("Saved to disk");
+      }
     }
     fileInput.value = ""; // Reset uploader input
   };
@@ -4297,14 +6167,7 @@ function renderFlowchart() {
 
 // Collapsible Scene Configuration toggle helper
 function toggleSceneMeta() {
-  const grid = document.getElementById('scene-meta-grid');
-  const status = document.getElementById('scene-meta-toggle-status');
-  const arrow = document.getElementById('scene-meta-toggle-arrow');
-  if (grid) {
-    const isHidden = grid.classList.toggle('hidden');
-    if (status) status.innerText = isHidden ? "(collapsed)" : "(expanded)";
-    if (arrow) arrow.innerText = isHidden ? "▼" : "▲";
-  }
+  if (window.editor) window.editor.openSceneSettings();
 }
 
 // Initialize editor on load
