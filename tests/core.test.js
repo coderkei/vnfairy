@@ -8,6 +8,23 @@ const { createProjectStore } = require('../project-store');
 const { createAssetService } = require('../asset-service');
 const { createPackageService } = require('../package-service');
 
+test('ending scenes keep their dialogue path until the scene is exhausted', () => {
+  const engineSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'engine.js'), 'utf8');
+  const loadSceneStart = engineSource.indexOf('  async executeLoadScene(sceneId)');
+  const playStepStart = engineSource.indexOf('  playStep() {', loadSceneStart);
+  const sceneEndStart = engineSource.indexOf('  handleSceneEnd(scene) {');
+
+  assert.ok(loadSceneStart >= 0);
+  assert.ok(playStepStart > loadSceneStart);
+  assert.ok(sceneEndStart > playStepStart);
+
+  const loadSceneSource = engineSource.slice(loadSceneStart, playStepStart);
+  const sceneEndSource = engineSource.slice(sceneEndStart, sceneEndStart + 260);
+
+  assert.doesNotMatch(loadSceneSource, /if \(scene\.isEnding\)/);
+  assert.match(sceneEndSource, /if \(scene\.isEnding\)\s*\{\s*this\.handleEnding\(scene\);\s*return;/);
+});
+
 test('legacy projects receive explicit version metadata', () => {
   const project = core.migrations.migrateProject({
     id: 'demo',

@@ -1035,12 +1035,6 @@ class VNFairyEngine {
       }
     }
 
-    // Check if ending scene
-    if (scene.isEnding) {
-      this.handleEnding(scene);
-      return;
-    }
-
     // Load background
     let bgSrc = "";
     const useSolidWhiteBackground = scene.background === '__solid_white__';
@@ -1544,6 +1538,12 @@ class VNFairyEngine {
 
   // Handle scene text depletion (branch or next scene)
   handleSceneEnd(scene) {
+    // Ending scenes show their dialogue before the completion screen.
+    if (scene.isEnding) {
+      this.handleEnding(scene);
+      return;
+    }
+
     // Check conditional advancements/branches first!
     if (scene.conditionalBranches && scene.conditionalBranches.length > 0) {
       for (const branch of scene.conditionalBranches) {
