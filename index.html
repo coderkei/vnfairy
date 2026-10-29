@@ -191,6 +191,7 @@ full terms.
 
         <!-- Quick Menu -->
         <div class="quick-menu">
+          <button class="btn-quick" id="btn-quick-back">Back</button>
           <button class="btn-quick" id="btn-quick-history">History</button>
           <button class="btn-quick" id="btn-quick-auto">Auto</button>
           <button class="btn-quick" id="btn-quick-skip">Skip</button>
@@ -303,6 +304,18 @@ full terms.
           </div>
 
           <div class="setting-item-full">
+            <label>Skip Mode</label>
+            <div class="radio-group-full">
+              <label class="radio-label-full" style="cursor:pointer;">
+                <input type="radio" name="skip-mode" id="skip-mode-read" value="read" checked> Read Text Only
+              </label>
+              <label class="radio-label-full" style="cursor:pointer;">
+                <input type="radio" name="skip-mode" id="skip-mode-all" value="all"> All Text
+              </label>
+            </div>
+          </div>
+
+          <div class="setting-item-full">
             <label>Screen Mode</label>
             <div class="toggle-group-full">
               <button class="btn-toggle-full" id="btn-screen-window">Window</button>
@@ -317,7 +330,8 @@ full terms.
           <ul class="controls-help-list">
             <li><span class="key-badge">Space</span> / <span class="key-badge">Enter</span> Advance Dialogue</li>
             <li><span class="key-badge">Arrow Up</span> / <span class="key-badge">Page Up</span> Dialogue History</li>
-            <li><span class="key-badge">Ctrl</span> Skip Dialogue (Fast Forward)</li>
+            <li><span class="key-badge">Arrow Left</span> / <span class="key-badge">Wheel Up</span> Roll Back</li>
+            <li><span class="key-badge">Ctrl</span> Skip Dialogue (Hold, ignores Skip Mode)</li>
             <li><span class="key-badge">A</span> Toggle Auto Play</li>
             <li><span class="key-badge">H</span> Hide Dialogue HUD</li>
             <li><span class="key-badge">W</span> Select Music (in Gallery)</li>

@@ -84,6 +84,8 @@ node server.js --port=8080 --host=192.168.1.100
 
 - **Save and load** — Use paginated browser saves stored by immutable project ID.
 - **Options and controls** — Adjust text speed, skip speed, and volume; use mouse or keyboard controls.
+- **Rollback** — Step back through earlier lines with the Back button, Left Arrow, or mouse wheel, including back out of choice menus.
+- **Skip read text** — Skip stops at lines the player hasn't read yet (tracked per project); switch to "All Text" in Options or hold Ctrl to force-skip.
 - **Gallery and achievements** — Unlock characters, backgrounds, music, and endings as players progress.
 - **Offline fallback** — Drag and drop a `project.json` into the player when a local server is unavailable.
 

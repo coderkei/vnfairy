@@ -32,8 +32,16 @@ class VNFairyEngine {
     this.history = [];
     this.autoPlayActive = false;
     this.skipActive = false;
+    this.skipForce = false; // true while Ctrl is held: skip ignores read status
     this.variables = {};
-    
+
+    // Rollback snapshots (one per displayed line) and read-line tracking
+    this.rollbackStack = [];
+    this.inlineBranch = null; // set while playing a choice's inline dialogue
+    this.seenLines = null; // lazily loaded Set of line keys
+    this.seenSaveTimer = null;
+    this.lastWheelRollback = 0;
+
     // Audio Context for fallback synthesizers
     this.audioCtx = null;
     this.synthInterval = null;
@@ -50,7 +58,8 @@ class VNFairyEngine {
     this.textSpeed = 40; // ms per char (lower = faster)
     this.textSize = 'medium'; // 'small' | 'medium' | 'large'
     this.skipSpeed = 'medium'; // 'slow' | 'medium' | 'fast'
-    
+    this.skipUnread = false; // false = skip stops at text the player hasn't read
+
     this.unlockedEndings = [];
     this.isBeforeTitle = false;
 
@@ -213,6 +222,8 @@ class VNFairyEngine {
       }
       throw error;
     }
+    this.seenLines = null;
+    this.rollbackStack = [];
     if (!this.project.id) this.project.id = this.legacyProjectId(this.project);
     this.unlockedEndings = this.readProjectStorage('endings', []);
     this.unlockedAssets = this.readProjectStorage('unlocked_assets', []);
@@ -666,7 +677,8 @@ class VNFairyEngine {
     this.autoPlayActive = false;
     this.skipActive = false;
     this.currentSceneId = null;
-    
+    this.rollbackStack = [];
+
     document.getElementById('stage-screen').classList.add('hidden');
     document.getElementById('credits-screen').classList.add('hidden');
     
@@ -856,6 +868,7 @@ class VNFairyEngine {
         ? logic.createRuntimeVariables(this.project.config || {})
         : {};
       this.history = [];
+      this.rollbackStack = [];
       this.isBeforeTitle = false;
       this.currentSceneId = null; // Clear previous scene to avoid double fade out
       await this.loadScene(this.project.startSceneId);
@@ -964,6 +977,7 @@ class VNFairyEngine {
     const scene = this.project.scenes[sceneId];
     this.currentSceneId = sceneId;
     this.dialogueIndex = 0;
+    this.inlineBranch = null;
     this.history = [];
 
     // Load music (if defined, otherwise continue playing / resume current music)
@@ -1177,6 +1191,8 @@ class VNFairyEngine {
         this.handleSceneEnd(scene);
         return;
       }
+      this.recordRollbackPoint();
+      this.checkSkipUnread(this.markLineSeen(null));
       const textContainer = document.getElementById('stage-fullscreen-text-container');
       const contentEl = document.getElementById('fullscreen-text-content');
       const dialogueBox = document.getElementById('dialogue-box');
@@ -1227,6 +1243,8 @@ class VNFairyEngine {
     }
 
     const step = dialogues[this.dialogueIndex];
+    this.recordRollbackPoint();
+    this.checkSkipUnread(this.markLineSeen(step));
 
     // Check if fullscreen text cutscene
     if (scene.isCutscene && (scene.cutsceneType === 'text' || scene.cutsceneType === 'autotext')) {
@@ -1536,6 +1554,121 @@ class VNFairyEngine {
     this.playStep();
   }
 
+  // Snapshot the line about to be shown so the player can roll back to it
+  recordRollbackPoint() {
+    const scene = this.project.scenes[this.currentSceneId];
+    const stack = this.rollbackStack;
+    const top = stack[stack.length - 1];
+    const point = {
+      currentSceneId: this.currentSceneId,
+      dialogueIndex: this.dialogueIndex,
+      dialogue: scene.dialogue,
+      inlineBranch: this.inlineBranch,
+      isBeforeTitle: this.isBeforeTitle,
+      variables: JSON.parse(JSON.stringify(this.variables || {})),
+      history: this.history,
+      historyLength: this.history.length
+    };
+    // Re-playing the same line (e.g. after a load or rollback) replaces its snapshot
+    if (top && top.currentSceneId === point.currentSceneId && top.dialogueIndex === point.dialogueIndex && top.dialogue === point.dialogue) {
+      stack[stack.length - 1] = point;
+    } else {
+      stack.push(point);
+      if (stack.length > 200) stack.shift();
+    }
+  }
+
+  // Step back to the previously displayed line
+  rollback() {
+    if (this.isFadingText || this._isTransitioning) return;
+    const stack = this.rollbackStack;
+    const scene = this.project.scenes[this.currentSceneId];
+    const top = stack[stack.length - 1];
+    // The top snapshot is the line on screen, unless we've moved past it (e.g. to a choice menu)
+    if (top && scene && top.currentSceneId === this.currentSceneId && top.dialogueIndex === this.dialogueIndex && top.dialogue === scene.dialogue) {
+      stack.pop();
+    }
+    const point = stack.pop();
+    if (!point) {
+      if (top) stack.push(top);
+      this.showToast("Can't roll back any further.");
+      return;
+    }
+
+    if (this.typewriterTimer) clearTimeout(this.typewriterTimer);
+    this.typewriterTimer = null;
+    this.isTyping = false;
+    this.autoPlayActive = false;
+    this.skipActive = false;
+    this.updateQuickMenuState();
+    document.getElementById('choices-overlay').classList.add('hidden');
+
+    point.history.length = point.historyLength;
+    const state = {
+      currentSceneId: point.currentSceneId,
+      dialogueIndex: point.dialogueIndex,
+      dialogue: point.dialogue,
+      inlineBranch: point.inlineBranch,
+      isBeforeTitle: point.isBeforeTitle,
+      variables: point.variables,
+      history: point.history
+    };
+
+    if (point.currentSceneId === this.currentSceneId) {
+      // Same scene: swap state in place without a screen fade
+      this.dialogueIndex = state.dialogueIndex;
+      this.project.scenes[this.currentSceneId].dialogue = state.dialogue;
+      this.inlineBranch = state.inlineBranch;
+      this.isBeforeTitle = state.isBeforeTitle;
+      this.variables = state.variables;
+      this.history = state.history;
+      this.updateDebugVariablesList();
+      this.playStep();
+    } else {
+      this.restoreGameState(state);
+    }
+  }
+
+  // Read-line tracking, used to stop skipping at unread text
+  lineKey(step) {
+    if (step && typeof step.id === 'string' && step.id) return `${this.currentSceneId}:${step.id}`;
+    return `${this.currentSceneId}:${this.inlineBranch || 'main'}:${this.dialogueIndex}`;
+  }
+
+  getSeenLines() {
+    if (!this.seenLines) {
+      const stored = this.readProjectStorage('seen', []);
+      this.seenLines = new Set(Array.isArray(stored) ? stored : []);
+    }
+    return this.seenLines;
+  }
+
+  // Mark the current line as read; returns whether it had been read before
+  markLineSeen(step) {
+    const seen = this.getSeenLines();
+    const key = this.lineKey(step);
+    if (seen.has(key)) return true;
+    seen.add(key);
+    if (!this.seenSaveTimer) {
+      this.seenSaveTimer = setTimeout(() => {
+        this.seenSaveTimer = null;
+        try {
+          this.writeProjectStorage('seen', [...this.getSeenLines()]);
+        } catch (err) {
+          console.warn('Could not store read-line progress.', err);
+        }
+      }, 1000);
+    }
+    return false;
+  }
+
+  checkSkipUnread(wasSeen) {
+    if (wasSeen || !this.skipActive || this.skipForce || this.skipUnread) return;
+    this.skipActive = false;
+    this.updateQuickMenuState();
+    this.showToast("Skip stopped at unread text.");
+  }
+
   // Handle scene text depletion (branch or next scene)
   handleSceneEnd(scene) {
     // Ending scenes show their dialogue before the completion screen.
@@ -1579,6 +1712,7 @@ class VNFairyEngine {
         this.loadScene(choice.target);
       } else if (choice.action === 'text') {
         scene.dialogue = choice.dialogues || [{ text: "Nothing happens.", speaker: "narrator" }];
+        this.inlineBranch = `choice${choiceIndex}`;
         this.dialogueIndex = 0;
         this.playStep();
       }
@@ -1739,6 +1873,7 @@ class VNFairyEngine {
           // This is incredibly powerful and satisfies different text branches.
           const scene = this.project.scenes[this.currentSceneId];
           scene.dialogue = choice.dialogues || [{ text: "Nothing happens.", speaker: "narrator" }];
+          this.inlineBranch = `choice${index}`;
           this.dialogueIndex = 0;
           this.playStep();
         }
@@ -1947,12 +2082,18 @@ class VNFairyEngine {
         engineVersion: this.version
       })
       : { state };
-    state = save.state;
+    this.rollbackStack = [];
+    this.restoreGameState(save.state);
+  }
+
+  // Rebuild the stage from a state object (a loaded save or a rollback point)
+  restoreGameState(state) {
     this.transitionWithFade(async () => {
       this.stopVideoCutscene();
       this.currentSceneId = state.currentSceneId;
       this.dialogueIndex = state.dialogueIndex;
-      this.isBeforeTitle = false;
+      this.inlineBranch = state.inlineBranch || null;
+      this.isBeforeTitle = !!state.isBeforeTitle;
       const logic = window.VNFairyCore && window.VNFairyCore.logicModel;
       this.variables = logic
         ? logic.createRuntimeVariables(this.project.config || {}, state.variables || {})
@@ -1978,6 +2119,7 @@ class VNFairyEngine {
 
       // Reload scene components
       const scene = this.project.scenes[this.currentSceneId];
+      if (Array.isArray(state.dialogue)) scene.dialogue = state.dialogue;
 
       // Background
       let bgSrc = "";
@@ -2172,6 +2314,7 @@ class VNFairyEngine {
     }
 
     // Quick Menu items
+    document.getElementById('btn-quick-back').onclick = () => this.rollback();
     document.getElementById('btn-quick-history').onclick = () => this.openHistoryModal();
     document.getElementById('btn-quick-auto').onclick = () => this.toggleAutoPlay();
     document.getElementById('btn-quick-skip').onclick = () => this.toggleSkip();
@@ -2235,6 +2378,17 @@ class VNFairyEngine {
       if (radio) {
         radio.onchange = () => {
           this.skipSpeed = speed;
+          this.saveSettings();
+        };
+      }
+    });
+
+    // Skip mode radio buttons (read text only / all text)
+    ['read', 'all'].forEach(mode => {
+      const radio = document.getElementById(`skip-mode-${mode}`);
+      if (radio) {
+        radio.onchange = () => {
+          this.skipUnread = mode === 'all';
           this.saveSettings();
         };
       }
@@ -2387,6 +2541,12 @@ class VNFairyEngine {
         }
       }
 
+      if (e.key === 'ArrowLeft' && this.isGameplayActive(true)) {
+        e.preventDefault();
+        this.rollback();
+        return;
+      }
+
       if (!this.isGameplayActive()) {
         return;
       }
@@ -2415,6 +2575,7 @@ class VNFairyEngine {
           // Control keydown skip
           if (!this.skipActive) {
             this.skipActive = true;
+            this.skipForce = true;
             this.autoPlayActive = false;
             this.updateQuickMenuState();
             
@@ -2446,15 +2607,26 @@ class VNFairyEngine {
 
     document.addEventListener('keyup', (e) => {
       if (e.key === 'Control') {
+        this.skipForce = false;
         if (this.skipActive) {
           this.skipActive = false;
           this.updateQuickMenuState();
         }
       }
     });
+
+    // Mouse wheel up rolls back (throttled so trackpads don't fire a burst)
+    document.getElementById('stage-screen').addEventListener('wheel', (e) => {
+      if (e.deltaY >= 0 || !this.isGameplayActive(true)) return;
+      const now = Date.now();
+      if (now - this.lastWheelRollback < 250) return;
+      this.lastWheelRollback = now;
+      this.rollback();
+    }, { passive: true });
   }
 
-  isGameplayActive() {
+  // allowChoices: treat an open choice menu as gameplay (used by rollback)
+  isGameplayActive(allowChoices = false) {
     const stageScreen = document.getElementById('stage-screen');
     if (!stageScreen || stageScreen.classList.contains('hidden')) return false;
 
@@ -2474,7 +2646,7 @@ class VNFairyEngine {
     if (musicScreen && !musicScreen.classList.contains('hidden')) return false;
 
     const choiceOverlay = document.getElementById('choices-overlay');
-    if (choiceOverlay && !choiceOverlay.classList.contains('hidden')) return false;
+    if (!allowChoices && choiceOverlay && !choiceOverlay.classList.contains('hidden')) return false;
 
     // Suspend general gameplay inputs if a video cutscene is currently playing
     const videoContainer = document.getElementById('stage-video-container');
@@ -2649,6 +2821,7 @@ class VNFairyEngine {
     this.sfxVolume = 0.7;
     this.textSize = 'medium';
     this.skipSpeed = 'medium';
+    this.skipUnread = false;
 
     this.saveSettings();
 
@@ -2673,6 +2846,9 @@ class VNFairyEngine {
 
     const skipRadioInput = document.getElementById('skip-speed-medium');
     if (skipRadioInput) skipRadioInput.checked = true;
+
+    const skipModeInput = document.getElementById('skip-mode-read');
+    if (skipModeInput) skipModeInput.checked = true;
 
     this.showToast("Settings reset to default.");
   }
@@ -3057,6 +3233,7 @@ class VNFairyEngine {
 
   toggleSkip() {
     this.skipActive = !this.skipActive;
+    this.skipForce = false;
     this.autoPlayActive = false;
     this.updateQuickMenuState();
     this.playSynthSFX('click');
@@ -3104,7 +3281,8 @@ class VNFairyEngine {
       musicVolume: this.musicVolume,
       sfxVolume: this.sfxVolume,
       textSize: this.textSize,
-      skipSpeed: this.skipSpeed
+      skipSpeed: this.skipSpeed,
+      skipUnread: this.skipUnread
     };
     localStorage.setItem(this.settingsKey(), JSON.stringify(settings));
   }
@@ -3132,6 +3310,7 @@ class VNFairyEngine {
     }
     if (s.textSize) this.textSize = s.textSize;
     if (s.skipSpeed) this.skipSpeed = s.skipSpeed;
+    if (s.skipUnread !== undefined) this.skipUnread = !!s.skipUnread;
     this.syncSettingsUI();
   }
 
@@ -3159,6 +3338,9 @@ class VNFairyEngine {
 
     const radioSkip = document.getElementById(`skip-speed-${this.skipSpeed}`);
     if (radioSkip) radioSkip.checked = true;
+
+    const radioSkipMode = document.getElementById(this.skipUnread ? 'skip-mode-all' : 'skip-mode-read');
+    if (radioSkipMode) radioSkipMode.checked = true;
   }
 
   applyTextSize(size) {
