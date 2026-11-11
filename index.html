@@ -55,12 +55,15 @@ full terms.
       <h2>VNFairy Engine Portal</h2>
       <p class="muted">Select a Visual Novel to play from the list below:</p>
       
+      <div id="player-workspace-storage"></div>
+      <p id="player-workspace-error" class="muted hidden" role="status"></p>
       <div id="portal-projects-list" class="portal-list" style="margin: 20px 0; max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 6px;">
         <!-- Injected project rows -->
       </div>
       
       <div class="fallback-footer" style="display: flex; gap: 12px; justify-content: flex-end;">
-        <a href="/editor.html" class="btn-secondary" style="text-decoration: none; font-size: 0.9rem;">Open Designer</a>
+        <button type="button" class="btn-secondary" id="btn-open-project-file">Open project.json</button>
+        <a href="editor.html" class="btn-secondary" style="text-decoration: none; font-size: 0.9rem;">Open Designer</a>
       </div>
     </div>
   </div>
@@ -69,7 +72,7 @@ full terms.
   <div id="fallback-loader" class="fallback-screen hidden">
     <div class="fallback-card glass-panel animate-scale">
       <h2>VNFairy Player</h2>
-      <p>Browser security blocks loading local files directly via <code>file://</code>.</p>
+      <p>Open a project file to play it in this tab.</p>
       <div class="drop-zone" id="drop-zone">
         <p>Drag & Drop your <code>project.json</code> here</p>
         <span class="muted">or</span>
@@ -497,6 +500,7 @@ full terms.
   <script src="js/ui/dom-views.js?v=2.0.0"></script>
   <script src="js/ui/modal-controls.js?v=2.0.0"></script>
   <script src="js/player/player-views.js?v=2.0.0"></script>
+  <script src="js/project-workspace.js?v=2.0.0"></script>
   <script src="js/engine.js?v=2.0.0"></script>
 </body>
 </html>

@@ -1,8 +1,8 @@
 # VNFairy
 
-**A lightweight visual novel engine and designer built with HTML5 and Node.js.**
+**A lightweight visual novel engine and designer that runs in your browser.**
 
-VNFairy lets you create, design, play, and package visual novels in your browser. It includes a visual authoring workspace, a complete HTML5 player, and a small local server for project storage and exports.
+VNFairy lets you create, design, play, and package visual novels in your browser. The Designer and Player can run on static hosting or use the optional Node server.
 
 **Current release: 2.0.0**
 
@@ -27,11 +27,31 @@ More interface and player views are available in the [screenshots](screenshots) 
 
 ## Quick start
 
-### Prerequisites
+### Run on static hosting
 
-- [Node.js](https://nodejs.org/) v16 or newer
+Serve the repository root as a static site, then open `editor.html` for the Designer or `index.html` for the Player. For GitHub Pages, select **Deploy from a branch** and **/ (root)** in Pages settings. No install or build command is needed. Only publish files you want publicly accessible; keep your project workspace separate from the site source.
 
-### Run locally
+- **Folder storage:** On HTTPS or localhost, a browser with folder access offers **Choose folder**. Select a dedicated folder to hold your stories. VNFairy saves a project subfolder with `project.json` and media under `assets/` in that folder. If permission expires, use **Reconnect folder**.
+- **Browser storage:** In Firefox and other browsers without the folder picker, projects and media are saved in the current browser. Use **Import .vnfairy** and **Export source** to back up your work or move it between browsers, folders, and the Node server. Clearing site data removes projects stored in the browser.
+- **Playback:** Use **Preview** or open the separate Player on the same site to play stories from the active workspace. **Export game** creates a playable ZIP for sharing. **Export source** creates an editable archive.
+
+Switching storage changes which stories you see. To move an existing story, export it before switching, then import it in the destination workspace.
+
+### Run static mode locally
+
+With Python 3 installed, open a terminal in the VNFairy folder and run:
+
+```powershell
+python -m http.server 8000 --bind 127.0.0.1
+```
+
+Use `python3` if that is how Python 3 is installed on your system. The command serves the files on your own computer and requires no Node installation or build step.
+
+Open [Designer](http://127.0.0.1:8000/editor.html) or [Player](http://127.0.0.1:8000/) while the terminal is running. The Designer starts in browser storage. Use **Choose folder** if your browser offers it, or use **Import .vnfairy** and **Export source**. Keep using the same address and port to see the same browser workspace. Press **Ctrl+C** in the terminal to stop serving.
+
+### Run the optional Node server
+
+Requires [Node.js](https://nodejs.org/) v16 or newer.
 
 ```bash
 git clone https://github.com/coderkei/VNFairy.git
@@ -47,7 +67,7 @@ Then open one of these URLs:
 | `http://localhost:3000/` | Play visual novels with the VNFairy Player |
 | `http://localhost:3000/editor.html` | Create and edit projects in the VNFairy Designer |
 
-The server binds to `127.0.0.1` on port `3000` by default and creates a demo project at `data/projects/demo/` on first run. Use custom values when needed:
+The server binds to `127.0.0.1` on port `3000` by default and creates a demo project at `data/projects/demo/` on first run. VNFairy uses the server when it detects it, and you can switch storage from the dashboard. Server mode also keeps recovery snapshots. Use custom values when needed:
 
 ```bash
 node server.js --port=8080 --host=192.168.1.100
@@ -87,7 +107,7 @@ node server.js --port=8080 --host=192.168.1.100
 - **Rollback** — Step back through earlier lines with the Back button, Left Arrow, or mouse wheel, including back out of choice menus.
 - **Skip read text** — Skip stops at lines the player hasn't read yet (tracked per project); switch to "All Text" in Options or hold Ctrl to force-skip.
 - **Gallery and achievements** — Unlock characters, backgrounds, music, and endings as players progress.
-- **Offline fallback** — Drag and drop a `project.json` into the player when a local server is unavailable.
+- **Standalone file playback** — Open or drag a `project.json` into the Player, or open a packaged game's `index.html` after extracting its ZIP.
 
 ### Designer and project workflow
 

@@ -3,7 +3,7 @@
   function renderProjectSelection(list, projects) {
     list.innerHTML = '';
     if (!projects.length) {
-      list.innerHTML = '<div class="muted" style="text-align:center;padding:20px 0;font-size:0.95rem;">No visual novels found on the server.</div>';
+      list.innerHTML = '<div class="muted" style="text-align:center;padding:20px 0;font-size:0.95rem;">No visual novels found in this workspace.</div>';
       return;
     }
     projects.forEach(project => {

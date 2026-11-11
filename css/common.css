@@ -291,6 +291,12 @@ h1, h2, h3, h4, h5, h6 {
   border-color: var(--border-strong);
   transform: translateY(-1px);
 }
+
+.workspace-storage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .btn-secondary:active {
   transform: translateY(1px);
 }

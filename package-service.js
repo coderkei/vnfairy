@@ -20,6 +20,7 @@ function createPackageService({ publicDir, projectsDir, loadProjectMerged }) {
     ['js/ui/dom-views.js', 'js/ui/dom-views.js'],
     ['js/ui/modal-controls.js', 'js/ui/modal-controls.js'],
     ['js/player/player-views.js', 'js/player/player-views.js'],
+    ['js/project-workspace.js', 'js/project-workspace.js'],
     ['js/engine.js', 'js/engine.js']
   ];
 

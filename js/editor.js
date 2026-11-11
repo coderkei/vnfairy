@@ -17,6 +17,8 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+const editorWorkspace = window.VNFairyWorkspace;
+
 class VNFairyEditor {
   constructor() {
     this.version = (window.VNFairyCore && window.VNFairyCore.versioning.DEFAULT_ENGINE_VERSION) || "2.0.0";
@@ -265,8 +267,9 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     }
 
     try {
-      // 1. Fetch assets first so selector populating works
-      await this.refreshAssets();
+      await editorWorkspace.init();
+      await editorWorkspace.bindControls(document.getElementById('workspace-storage'));
+      document.getElementById('btn-restore-project').classList.toggle('hidden', editorWorkspace.mode !== 'server');
 
       if (!projectId) {
         // No project loaded, show projects list dashboard
@@ -276,10 +279,11 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         return;
       }
 
-      // 2. Fetch project
-      const response = await fetch(`/api/project?id=${projectId}`);
-      if (!response.ok) throw new Error("Could not load project");
+      await this.refreshAssets();
+      // Fetch project
+      const response = await editorWorkspace.request(`/api/project?id=${encodeURIComponent(projectId)}`);
       const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not load project");
       
       if (data.vnFairyVersion && this.isNewerVersion(data.vnFairyVersion, this.version)) {
         this.showVersionError(data.vnFairyVersion, this.version);
@@ -287,17 +291,25 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       }
       
       const localRecovery = this.loadLocalRecovery();
-      this.finishProjectLoad(localRecovery || data, localRecovery ? 'Recovered locally' : 'Saved to disk');
+      this.finishProjectLoad(localRecovery || data, localRecovery ? 'Recovered locally' : this.savedStatus());
 
     } catch (err) {
       console.error("Editor init failed.", err);
       const recovered = this.loadLocalRecovery();
       if (recovered) this.finishProjectLoad(recovered, 'Recovered locally');
-      else this.loadOfflineSandbox(true);
+      else if (editorWorkspace.mode === 'server' && projectId) this.loadOfflineSandbox(true);
+      else {
+        const notice = document.getElementById('workspace-error');
+        notice.textContent = err.message;
+        notice.classList.remove('hidden');
+        await this.loadProjectsList();
+      }
     }
   }
 
-  finishProjectLoad(data, status = 'Saved to disk') {
+  savedStatus() { return editorWorkspace.mode === 'browser' ? 'Saved in this browser' : 'Saved to disk'; }
+
+  finishProjectLoad(data, status = this.savedStatus()) {
     try {
       this.project = window.VNFairyCore && window.VNFairyCore.migrations
         ? window.VNFairyCore.migrations.migrateProject(data, { engineVersion: this.version })
@@ -339,12 +351,14 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       : Object.keys(this.project.scenes || {})[0];
     if (selectedScene) this.selectScene(selectedScene);
     this.initializeHistory();
-    this.updateSaveStatus(status, status !== 'Saved to disk');
+    this.updateSaveStatus(status, status !== this.savedStatus());
     return true;
   }
 
   localRecoveryKey() {
-    return `vnfairy_editor_recovery_${this.projectId || 'offline-sandbox'}`;
+    const scope = editorWorkspace.recoveryScope;
+    const prefix = scope === 'server' ? '' : `${location.pathname}:${scope}:`;
+    return `${prefix}vnfairy_editor_recovery_${this.projectId || 'offline-sandbox'}`;
   }
 
   loadLocalRecovery() {
@@ -354,7 +368,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       // saves, so using it here can replace a real project's data with an
       // unrelated blank sandbox while playback still loads the disk project.
       let raw = localStorage.getItem(this.localRecoveryKey());
-      if (!raw && !this.projectId) raw = localStorage.getItem('vnfairy_sandbox_project');
+      if (!raw && !this.projectId && editorWorkspace.mode === 'server') raw = localStorage.getItem('vnfairy_sandbox_project');
       if (!raw) return null;
 
       const recovery = JSON.parse(raw);
@@ -470,9 +484,9 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     try {
       let saveUrl = '/api/project';
       if (this.projectId) {
-        saveUrl += `?id=${this.projectId}`;
+        saveUrl += `?id=${encodeURIComponent(this.projectId)}`;
       }
-      const response = await fetch(saveUrl, {
+      const response = await editorWorkspace.request(saveUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.project)
@@ -480,8 +494,8 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.error || "Save API error");
       localStorage.removeItem(this.localRecoveryKey());
-      this.updateSaveStatus("Saved to disk");
-      if (showNotification) this.showToast("Saved to disk");
+      this.updateSaveStatus(this.savedStatus());
+      if (showNotification) this.showToast(this.savedStatus());
       return true;
     } catch (err) {
       console.warn("Could not save to disk; retaining a local recovery copy.", err);
@@ -601,12 +615,13 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     document.getElementById('project-author-input').value = this.project.author || "";
   }
 
-  // Fetch file structures on the server data folder
+  // Load the workspace asset inventory.
   async refreshAssets() {
     try {
-      const response = await fetch(`/api/assets?project=${this.projectId || 'demo'}`);
-      if (!response.ok) throw new Error("Could not load assets");
-      this.assets = await response.json();
+      const response = await editorWorkspace.request(`/api/assets?project=${encodeURIComponent(this.projectId || 'demo')}`);
+      const assets = await response.json();
+      if (!response.ok) throw new Error(assets.error || 'Could not load assets');
+      this.assets = assets;
       this.assetMetadata = this.assets.metadata || {};
       
       this.renderAssetsTab();
@@ -620,7 +635,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         this.renderUniversalSelectModalList(filter);
       }
     } catch (e) {
-      console.warn("Could not fetch server assets. Asset upload disabled offline.", e);
+      console.warn("Could not load workspace assets.", e);
     }
   }
 
@@ -696,7 +711,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           const spriteCard = document.createElement('div');
           spriteCard.className = 'char-sprite-card is-previewable';
           spriteCard.title = `${sprite.name || sprite.id}${sprite.id === char.defaultExpression ? ' · default' : ''}`;
-          spriteCard.innerHTML = `<img src="${this.escapeHtml(sprite.path || '')}" alt="${this.escapeHtml(sprite.name || sprite.id)}">`;
+          spriteCard.innerHTML = `<img src="${this.escapeHtml(editorWorkspace.resolveMedia(sprite.path) || '')}" alt="${this.escapeHtml(sprite.name || sprite.id)}">`;
           if (sprite.path) {
             spriteCard.onclick = event => {
               event.stopPropagation();
@@ -738,7 +753,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
       const card = document.createElement('div');
       card.className = "asset-card";
-      card.style.backgroundImage = `url('data/projects/${this.projectId || 'demo'}/assets/bg/${file}')`;
+      card.style.backgroundImage = `url('${this.assetUrl('bg', file)}')`;
       card.innerHTML = `
         <div class="asset-card-overlay">
           <button class="btn-delete-asset" onclick="window.editor.deleteAsset('bg', '${file}', event)" title="Delete Background">&times;</button>
@@ -763,7 +778,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       (char.sprites || []).forEach(sprite => {
         spritesHtml += `
           <div class="char-sprite-card" title="${sprite.name}">
-            <img src="${sprite.path}" alt="${sprite.name}">
+            <img src="${this.escapeHtml(editorWorkspace.resolveMedia(sprite.path))}" alt="${sprite.name}">
           </div>
         `;
       });
@@ -859,7 +874,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   }
 
   async deleteAssetFile(type, filename) {
-    const response = await fetch('/api/asset/delete', {
+    const response = await editorWorkspace.request('/api/asset/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, filename, project: this.projectId || 'demo' })
@@ -1074,7 +1089,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   async handleAssetUpload(file) {
     if (!file || !this.uploadingAssetType) return;
     try {
-      await this.uploadFileToServer(file, this.uploadingAssetType);
+      await this.uploadAssetFile(file, this.uploadingAssetType);
       await this.refreshAssets();
       this.registerUploadedUnlockable(file, this.uploadingAssetType);
       this.renderAssetsTab();
@@ -1087,75 +1102,6 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       const uploader = document.getElementById('asset-file-uploader');
       if (uploader) uploader.value = '';
     }
-    return;
-
-    if (!file) return;
-    this.updateSaveStatus("Uploading asset...");
-
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const base64Data = e.target.result;
-      
-      try {
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filename: file.name,
-            type: this.uploadingAssetType,
-            project: this.projectId || 'demo',
-            data: base64Data
-          })
-        });
-
-        const res = await response.json();
-        if (!res.success) throw new Error(res.error);
-
-        this.showToast("Uploaded successfully!");
-        
-        // Refresh editor asset directories
-        await this.refreshAssets();
-
-        // Check if this was uploaded for an unlockable asset
-        if (this.uploadingUnlockableIndex !== undefined && this.uploadingUnlockableIndex !== null) {
-          const index = this.uploadingUnlockableIndex;
-          this.uploadingUnlockableIndex = undefined; // Reset
-          
-          const path = `data/projects/${this.projectId || 'demo'}/assets/${this.uploadingAssetType}/${file.name}`;
-          this.project.unlockables[index].path = path;
-
-          // Register in project assets if background or music
-          const id = file.name.replace(/\.[^/.]+$/, "");
-          if (this.uploadingAssetType === 'bg') {
-            this.project.assets.backgrounds = this.project.assets.backgrounds || [];
-            if (!this.project.assets.backgrounds.some(b => b.id === id)) {
-              this.project.assets.backgrounds.push({
-                id: id,
-                name: id.replace(/_/g, " "),
-                path: path
-              });
-            }
-          } else if (this.uploadingAssetType === 'music') {
-            this.project.assets.music = this.project.assets.music || [];
-            if (!this.project.assets.music.some(m => m.id === id)) {
-              this.project.assets.music.push({
-                id: id,
-                name: id.replace(/_/g, " "),
-                path: path
-              });
-            }
-          }
-
-          this.renderUnlockablesTab();
-        }
-
-        this.saveProject();
-      } catch (err) {
-        alert("Upload failed: " + err.message);
-        this.updateSaveStatus("Save failed", true);
-      }
-    };
-    reader.readAsDataURL(file);
   }
 
   fileAsDataUrl(file) {
@@ -1167,8 +1113,9 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     });
   }
 
-  async uploadFileToServer(file, type) {
-    const response = await fetch('/api/upload', {
+  async uploadAssetFile(file, type) {
+    if (editorWorkspace.mode !== 'server') return editorWorkspace.upload(this.projectId, type, file);
+    const response = await editorWorkspace.request('/api/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filename: file.name, type, project: this.projectId || 'demo', data: await this.fileAsDataUrl(file) })
@@ -1201,7 +1148,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     this.updateSaveStatus('Uploading assets…');
     const failures = [];
     for (const file of selected) {
-      try { await this.uploadFileToServer(file, type); }
+      try { await this.uploadAssetFile(file, type); }
       catch (error) { failures.push(`${file.name}: ${error.message}`); }
     }
     await this.refreshAssets();
@@ -1241,7 +1188,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         button.type = 'button';
         button.className = `asset-sidebar-item${item.image ? ' has-preview' : ''}`;
         button.innerHTML = item.image
-          ? `<img src="${this.escapeHtml(item.image)}" alt=""><span><strong title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</strong><small>${this.escapeHtml(item.detail)}</small></span>`
+          ? `<img src="${this.escapeHtml(editorWorkspace.resolveMedia(item.image))}" alt=""><span><strong title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</strong><small>${this.escapeHtml(item.detail)}</small></span>`
           : `<span class="asset-sidebar-kind" aria-hidden="true">${type === 'music' ? '♪' : type === 'sound' ? 'SFX' : '▶'}</span><span><strong title="${this.escapeHtml(item.name)}">${this.escapeHtml(item.name)}</strong><small>${this.escapeHtml(item.detail)}</small></span>`;
         button.onclick = () => this.openAssetManagement(panelByType[type]);
         container.appendChild(button);
@@ -1506,7 +1453,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       if (activeSlot) {
         const img = activeSlot.querySelector('.mini-sprite-img');
         if (img) {
-          img.src = `data/projects/${this.projectId || 'demo'}/assets/char/${filename}`;
+          img.src = this.assetUrl('char', filename);
           img.classList.remove('hidden');
           img.style.transform = `scale(${scaleVal / 100})`;
           img.style.transformOrigin = 'bottom center';
@@ -2671,7 +2618,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       if (asset) bgSrc = asset.path;
     }
     bgElem.style.backgroundImage = bgSrc
-      ? `url('${bgSrc}')`
+      ? `url('${editorWorkspace.resolveMedia(bgSrc)}')`
       : isLightTheme
         ? 'linear-gradient(135deg, #ffffff, #e8edf4)'
         : 'linear-gradient(135deg, #1e293b, #0f172a)';
@@ -2816,7 +2763,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         }
 
         if (spritePath && !isNonVisual) {
-          img.src = spritePath;
+          img.src = editorWorkspace.resolveMedia(spritePath);
           img.classList.remove('hidden');
           img.style.transform = `scale(${scale})`;
           img.style.transformOrigin = 'bottom center';
@@ -2863,16 +2810,15 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   getAssetMeta(type, filename) {
     const metadata = this.assetMetadata[type] && this.assetMetadata[type][filename];
-    if (metadata) return metadata;
-    const project = this.project || {};
+    if (metadata && editorWorkspace.mode === 'server') return metadata;
+    const usages = window.VNFairyCore.assetRegistry.findUsages(this.project, type, filename);
     return {
       filename,
       type,
       size: 0,
-      usageCount: window.VNFairyCore && window.VNFairyCore.assetRegistry
-        ? window.VNFairyCore.assetRegistry.findUsages(project, type, filename).length : 0,
-      usages: window.VNFairyCore && window.VNFairyCore.assetRegistry
-        ? window.VNFairyCore.assetRegistry.findUsages(project, type, filename) : []
+      ...metadata,
+      usageCount: usages.length,
+      usages
     };
   }
 
@@ -2929,7 +2875,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   }
 
   assetUrl(type, filename) {
-    return `data/projects/${encodeURIComponent(this.projectId || 'demo')}/assets/${type}/${encodeURIComponent(filename)}`;
+    return editorWorkspace.resolveMedia(`data/projects/${encodeURIComponent(this.projectId || 'demo')}/assets/${type}/${encodeURIComponent(filename)}`);
   }
 
   refreshAssetFolderFilter() {
@@ -3072,7 +3018,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     dialog.className = 'asset-image-preview-dialog';
     const image = document.createElement('img');
     image.className = 'asset-image-preview-image';
-    image.src = path;
+    image.src = editorWorkspace.resolveMedia(path);
     image.alt = label;
     image.decoding = 'async';
     const caption = document.createElement('div');
@@ -4557,15 +4503,20 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   // Playtest trigger
   async testPlay() {
-    
-    // Save project changes before playtest
+    // Reserve the tab during the click so a folder write cannot outlast popup activation.
+    const preview = window.open('about:blank', '_blank');
+    if (!preview) {
+      alert('Allow pop-ups for this site to open a preview.');
+      return;
+    }
+    preview.opener = null;
     if (!await this.saveProject()) {
-      alert('Preview was not opened because the project is not saved to disk.');
+      preview.close();
+      alert('Preview was not opened because the project could not be saved.');
       return;
     }
 
-    const url = `/index.html?project=${this.projectId || 'demo'}&playtest=true&_t=${Date.now()}`;
-    window.open(url, '_blank');
+    preview.location.href = new URL(`index.html?project=${encodeURIComponent(this.projectId || 'demo')}&playtest=true&_t=${Date.now()}`, location.href);
   }
 
   // Package project into Zip file
@@ -4580,7 +4531,13 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     }
 
     try {
-      const checkResponse = await fetch(`/api/package/check?id=${encodeURIComponent(this.projectId || 'demo')}`);
+      if (editorWorkspace.mode !== 'server') {
+        await editorWorkspace.download(this.projectId, true);
+        this.updateSaveStatus(this.savedStatus());
+        this.showToast('Game packaged! Starting download…');
+        return;
+      }
+      const checkResponse = await editorWorkspace.request(`/api/package/check?id=${encodeURIComponent(this.projectId || 'demo')}`);
       const check = await checkResponse.json();
       if (checkResponse.ok && check.success && check.warnings && check.warnings.length) {
         const singleWarnings = check.warnings.filter(item => item.reason === 'single-asset-size').map(item => `${item.type}/${item.filename} (${this.formatAssetBytes(item.size)})`);
@@ -4592,7 +4549,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
           return;
         }
       }
-      const response = await fetch(`/api/package?id=${this.projectId || 'demo'}`, { method: 'POST' });
+      const response = await editorWorkspace.request(`/api/package?id=${this.projectId || 'demo'}`, { method: 'POST' });
       if (!response.ok) throw new Error("Packaging API failed");
       const res = await response.json();
 
@@ -4602,7 +4559,8 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       // Open download URL
       window.location.href = res.downloadUrl;
     } catch (e) {
-      alert("Failed to package game. Running offline sandbox? Export is only supported in local server mode.");
+      this.updateSaveStatus(this.savedStatus());
+      alert(`Failed to package game: ${e.message}`);
       this.showToast("Packaging failed!", 3000);
     }
   }
@@ -5203,9 +5161,15 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     return node.innerHTML;
   }
 
-  exportSourceProject(projectId = this.projectId) {
+  async exportSourceProject(projectId = this.projectId) {
     if (!projectId) return;
-    window.location.href = `/api/project/export?id=${encodeURIComponent(projectId)}`;
+    try {
+      if (this.project && projectId === this.projectId && !await this.saveProject()) throw new Error('Save failed');
+      if (editorWorkspace.mode === 'server') window.location.href = `api/project/export?id=${encodeURIComponent(projectId)}`;
+      else await editorWorkspace.download(projectId);
+    } catch (error) {
+      alert(`Export failed: ${error.message}`);
+    }
   }
 
   async openRecoveryModal() {
@@ -5215,7 +5179,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     modal.classList.remove('hidden');
     list.innerHTML = '<div class="recovery-empty">Loading previous versions…</div>';
     try {
-      const response = await fetch(`/api/project/recovery?id=${encodeURIComponent(this.projectId)}`);
+      const response = await editorWorkspace.request(`/api/project/recovery?id=${encodeURIComponent(this.projectId)}`);
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || 'Could not load recovery versions');
       if (window.VNFairyEditorViews) {
@@ -5230,7 +5194,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     if (!confirm('Restore this previous version? Your current version will remain available in recovery.')) return;
     this.updateSaveStatus('Saving…');
     try {
-      const response = await fetch(`/api/project/restore?id=${encodeURIComponent(this.projectId)}`, {
+      const response = await editorWorkspace.request(`/api/project/restore?id=${encodeURIComponent(this.projectId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ snapshotId })
@@ -5254,13 +5218,19 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       return;
     }
     try {
+      if (editorWorkspace.mode !== 'server') {
+        const result = await editorWorkspace.importSource(file);
+        this.showToast(`Imported ${result.title}`);
+        await this.loadProjectsList();
+        return;
+      }
       const bytes = new Uint8Array(await file.arrayBuffer());
       let binary = '';
       const chunkSize = 0x8000;
       for (let i = 0; i < bytes.length; i += chunkSize) {
         binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
       }
-      const response = await fetch('/api/project/import', {
+      const response = await editorWorkspace.request('/api/project/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: btoa(binary) })
@@ -5294,7 +5264,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
 
   async runDashboardAction(url, payload, successMessage) {
     try {
-      const response = await fetch(url, {
+      const response = await editorWorkspace.request(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -5323,9 +5293,9 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     listGrid.innerHTML = "";
 
     try {
-      const response = await fetch('/api/projects?includeArchived=1');
-      if (!response.ok) throw new Error("Failed to load projects list");
+      const response = await editorWorkspace.request('/api/projects?includeArchived=1');
       const projects = await response.json();
+      if (!response.ok) throw new Error(projects.error || "Failed to load projects list");
 
       const renderSection = (sectionProjects, label) => {
         if (!sectionProjects.length) return;
@@ -5344,8 +5314,8 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
             <div class="project-card-author">by ${this.escapeHtml(proj.author)}</div>
           </div>
           <div class="project-card-actions">
-            <a href="editor.html?project=${proj.id}" class="btn-primary">Open editor</a>
-            <a href="index.html?project=${proj.id}" target="_blank" class="btn-secondary">Preview</a>
+            <a href="editor.html?project=${encodeURIComponent(proj.id)}" class="btn-primary">Open editor</a>
+            <a href="index.html?project=${encodeURIComponent(proj.id)}" target="_blank" class="btn-secondary">Preview</a>
           </div>
           <div class="project-card-secondary-actions">
             <button type="button" data-action="rename">Rename</button>
@@ -5385,7 +5355,10 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       renderSection(projects.filter(project => !project.archived), 'Active stories');
       renderSection(projects.filter(project => project.archived), 'Archived stories');
     } catch (e) {
-      console.warn("Could not load projects from server.", e);
+      const error = document.createElement("p");
+      error.className = "muted";
+      error.textContent = e.message;
+      listGrid.append(error);
     }
 
     // Always add the "Create New Project" card at the end
@@ -5409,7 +5382,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     }
     
     try {
-      const response = await fetch('/api/project/create', {
+      const response = await editorWorkspace.request('/api/project/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, title, author })
@@ -5428,7 +5401,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
   // Delete project from server
   async deleteProject(id) {
     try {
-      const response = await fetch(`/api/project/delete?id=${id}`, {
+      const response = await editorWorkspace.request(`/api/project/delete?id=${id}`, {
         method: 'POST'
       });
       const res = await response.json();
@@ -5551,7 +5524,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
     
     if (value.startsWith('data/')) {
       if (value.includes('/bg/') || value.includes('/char/')) {
-        return `<div class="select-preview-thumb" style="background-image: url('${value}');"></div>`;
+        return `<div class="select-preview-thumb" style="background-image: url('${editorWorkspace.resolveMedia(value)}');"></div>`;
       } else if (value.includes('/music/')) {
         return `<div class="select-preview-thumb">M</div>`;
       } else if (value.includes('/sound/')) {
@@ -5566,7 +5539,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       const file = (this.assets.bg || []).find(f => f.replace(/\.[^/.]+$/, "") === value);
       if (file) {
         const path = `data/projects/${projectId}/assets/bg/${file}`;
-        return `<div class="select-preview-thumb" style="background-image: url('${path}');"></div>`;
+        return `<div class="select-preview-thumb" style="background-image: url('${editorWorkspace.resolveMedia(path)}');"></div>`;
       }
     } else if (assetType === 'music') {
       return `<div class="select-preview-thumb">M</div>`;
@@ -5580,7 +5553,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       }
       const char = (this.project.assets.characters || []).find(c => c.id === value);
       if (char && char.sprites && char.sprites.length > 0) {
-        return `<div class="select-preview-thumb" style="background-image: url('${char.sprites[0].path}'); background-size: contain; background-repeat: no-repeat;"></div>`;
+        return `<div class="select-preview-thumb" style="background-image: url('${editorWorkspace.resolveMedia(char.sprites[0].path)}'); background-size: contain; background-repeat: no-repeat;"></div>`;
       }
       return `<div class="select-preview-thumb">C</div>`;
     } else if (assetType === 'expression') {
@@ -5591,19 +5564,19 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       if (char && char.sprites) {
         const sprite = char.sprites.find(s => s.id === value);
         if (sprite) {
-          return `<div class="select-preview-thumb" style="background-image: url('${sprite.path}'); background-size: contain; background-repeat: no-repeat;"></div>`;
+          return `<div class="select-preview-thumb" style="background-image: url('${editorWorkspace.resolveMedia(sprite.path)}'); background-size: contain; background-repeat: no-repeat;"></div>`;
         }
       }
     } else if (assetType === 'char-sprite-file') {
       const path = `data/projects/${projectId}/assets/char/${value}`;
-      return `<div class="select-preview-thumb" style="background-image: url('${path}'); background-size: contain; background-repeat: no-repeat;"></div>`;
+      return `<div class="select-preview-thumb" style="background-image: url('${editorWorkspace.resolveMedia(path)}'); background-size: contain; background-repeat: no-repeat;"></div>`;
     } else if (assetType === 'scene') {
       const scene = this.project.scenes[value];
       if (scene && scene.background) {
         const bgFile = (this.assets.bg || []).find(f => f.replace(/\.[^/.]+$/, "") === scene.background);
         if (bgFile) {
           const path = `data/projects/${projectId}/assets/bg/${bgFile}`;
-          return `<div class="select-preview-thumb" style="background-image: url('${path}');"></div>`;
+          return `<div class="select-preview-thumb" style="background-image: url('${editorWorkspace.resolveMedia(path)}');"></div>`;
         }
       }
       return `<div class="select-preview-thumb">SC</div>`;
@@ -5743,7 +5716,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         const file = (this.assets.bg || []).find(f => f.replace(/\.[^/.]+$/, "") === val);
         if (file) {
           const path = `data/projects/${projectId}/assets/bg/${file}`;
-          previewHtml = `<div class="universal-card-preview-image" style="background-image: url('${path}');"></div>`;
+          previewHtml = `<div class="universal-card-preview-image" style="background-image: url('${editorWorkspace.resolveMedia(path)}');"></div>`;
         } else {
           previewHtml = `<div class="universal-card-preview-image empty-preview">🚫</div>`;
         }
@@ -5754,7 +5727,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         } else {
         const char = (this.project.assets.characters || []).find(c => c.id === val);
         if (char && char.sprites && char.sprites.length > 0) {
-          previewHtml = `<div class="universal-card-preview-image char-preview" style="background-image: url('${char.sprites[0].path}'); background-size: contain;"></div>`;
+          previewHtml = `<div class="universal-card-preview-image char-preview" style="background-image: url('${editorWorkspace.resolveMedia(char.sprites[0].path)}'); background-size: contain;"></div>`;
         } else {
           previewHtml = `<div class="universal-card-preview-image empty-preview">👤</div>`;
         }
@@ -5767,21 +5740,21 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
         if (char && char.sprites) {
           const sprite = char.sprites.find(s => s.id === val);
           if (sprite) {
-            previewHtml = `<div class="universal-card-preview-image char-preview" style="background-image: url('${sprite.path}'); background-size: contain;"></div>`;
+            previewHtml = `<div class="universal-card-preview-image char-preview" style="background-image: url('${editorWorkspace.resolveMedia(sprite.path)}'); background-size: contain;"></div>`;
           } else {
             previewHtml = `<div class="universal-card-preview-image empty-preview">👤</div>`;
           }
         }
       } else if (assetType === 'char-sprite-file') {
         const path = `data/projects/${projectId}/assets/char/${val}`;
-        previewHtml = `<div class="universal-card-preview-image char-preview" style="background-image: url('${path}'); background-size: contain;"></div>`;
+        previewHtml = `<div class="universal-card-preview-image char-preview" style="background-image: url('${editorWorkspace.resolveMedia(path)}'); background-size: contain;"></div>`;
       } else if (assetType === 'scene') {
         const scene = this.project.scenes[val];
         if (scene && scene.background) {
           const bgFile = (this.assets.bg || []).find(f => f.replace(/\.[^/.]+$/, "") === scene.background);
           if (bgFile) {
             const path = `data/projects/${projectId}/assets/bg/${bgFile}`;
-            previewHtml = `<div class="universal-card-preview-image" style="background-image: url('${path}');"></div>`;
+            previewHtml = `<div class="universal-card-preview-image" style="background-image: url('${editorWorkspace.resolveMedia(path)}');"></div>`;
           } else {
             previewHtml = `<div class="universal-card-preview-image empty-preview">🎬</div>`;
           }
@@ -5889,7 +5862,7 @@ Accent Color      : ${this.project && this.project.config ? (this.project.config
       }
     }
 
-    const audio = new Audio(path);
+    const audio = new Audio(editorWorkspace.resolveMedia(path));
     audio.filename = path;
     audio.btn = btnElem;
     this.previewAudioElement = audio;
@@ -6292,7 +6265,7 @@ function triggerExpressionUpload(btn) {
     if (window.editor) {
       window.editor.updateSaveStatus("Uploading character art...");
       try {
-          await window.editor.uploadFileToServer(file, 'char');
+          await window.editor.uploadAssetFile(file, 'char');
           
           window.editor.showToast("Sprite uploaded successfully!");
           await window.editor.refreshAssets();
@@ -6309,7 +6282,7 @@ function triggerExpressionUpload(btn) {
       } catch (err) {
           alert("Upload failed: " + err.message);
       } finally {
-          window.editor.updateSaveStatus("Saved to disk");
+          window.editor.updateSaveStatus(window.editor.savedStatus());
       }
     }
     fileInput.value = ""; // Reset uploader input

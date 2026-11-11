@@ -23,6 +23,8 @@
  * itself being subject to the GPL. See LICENSE.txt in the root directory for details.
  */
 
+const playerWorkspace = window.VNFairyWorkspace;
+
 class VNFairyEngine {
   constructor() {
     this.version = (window.VNFairyCore && window.VNFairyCore.versioning.DEFAULT_ENGINE_VERSION) || "2.0.0";
@@ -101,11 +103,13 @@ class VNFairyEngine {
     }
 
     try {
-      // If no project specified in URL, load projects list from server
+      await playerWorkspace.init();
+      await playerWorkspace.bindControls(document.getElementById('player-workspace-storage'));
+      // With no project selected, show the active workspace.
       if (!projectId) {
-        const response = await fetch(`/api/projects?_t=${Date.now()}`);
-        if (!response.ok) throw new Error('Could not load projects list');
+        const response = await playerWorkspace.request(`/api/projects?_t=${Date.now()}`);
         const projects = await response.json();
+        if (!response.ok) throw new Error(projects.error || 'Could not load projects list');
         
         loader.classList.add('hidden');
         this.showProjectsSelectionScreen(projects);
@@ -113,14 +117,19 @@ class VNFairyEngine {
       }
 
       // Fetch the specific project
-      const response = await fetch(`/api/project?id=${projectId}&_t=${Date.now()}`);
-      if (!response.ok) throw new Error('Project load failed');
+      const response = await playerWorkspace.request(`/api/project?id=${encodeURIComponent(projectId)}&_t=${Date.now()}`);
       const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Project load failed');
+      await playerWorkspace.loadMedia(projectId);
+      if (playerWorkspace.mode !== 'server') this.workspaceScope = location.pathname.replace(/[^/]*$/, '') + playerWorkspace.recoveryScope;
       this.loadProject(data);
     } catch (err) {
-      console.warn("Could not load project from server. Showing fallback loader.", err);
+      console.warn("Could not load workspace.", err);
       loader.classList.add('hidden');
-      document.getElementById('fallback-loader').classList.remove('hidden');
+      this.showProjectsSelectionScreen([]);
+      const error = document.getElementById('player-workspace-error');
+      error.textContent = err.message;
+      error.classList.remove('hidden');
     }
   }
 
@@ -138,8 +147,8 @@ class VNFairyEngine {
     if (projects.length === 0) {
       list.innerHTML = `
         <div class="muted" style="text-align:center; padding: 20px 0; font-size: 0.95rem;">
-          No visual novels found on the server.<br>
-          Open the <a href="/editor.html" style="color:var(--primary); font-weight:600; text-decoration:none;">Designer</a> to create your first story!
+          No visual novels found in this workspace.<br>
+          Open the <a href="editor.html" style="color:var(--primary); font-weight:600; text-decoration:none;">Designer</a> to create your first story!
         </div>
       `;
     } else {
@@ -310,13 +319,14 @@ class VNFairyEngine {
 
   projectStorageKey(namespace) {
     const projectId = (this.project && this.project.id) || 'default';
-    return `vnfairy_${namespace}_${projectId}`;
+    const prefix = this.workspaceScope ? `${this.workspaceScope}:` : '';
+    return `${prefix}vnfairy_${namespace}_${projectId}`;
   }
 
   readProjectStorage(namespace, fallback) {
     const key = this.projectStorageKey(namespace);
     let raw = localStorage.getItem(key);
-    if (raw === null && this.project && this.project.title) {
+    if (raw === null && !this.workspaceScope && this.project && this.project.title) {
       const legacyKey = `vnfairy_${namespace}_${this.project.title}`;
       raw = localStorage.getItem(legacyKey);
       if (raw !== null) localStorage.setItem(key, raw);
@@ -382,7 +392,7 @@ class VNFairyEngine {
           if (asset) fileSrc = asset.path;
         }
         if (fileSrc) {
-          const sfx = new Audio(fileSrc);
+          const sfx = new Audio(playerWorkspace.resolveMedia(fileSrc));
           sfx.volume = this.sfxVolume;
           sfx.play().catch(err => {
             console.warn("Failed to play custom click SFX: " + fileSrc, err);
@@ -463,7 +473,7 @@ class VNFairyEngine {
     }
 
     // Play html5 audio element
-    const audio = new Audio(fileSrc);
+    const audio = new Audio(playerWorkspace.resolveMedia(fileSrc));
     audio.loop = true;
     audio.volume = this.musicVolume;
     this.activeAudioElement = audio;
@@ -651,7 +661,7 @@ class VNFairyEngine {
     }
 
     // Play html5 audio element
-    const audio = new Audio(fileSrc);
+    const audio = new Audio(playerWorkspace.resolveMedia(fileSrc));
     audio.loop = false;
     audio.volume = this.sfxVolume;
     this.activeVoiceElement = audio;
@@ -731,7 +741,7 @@ class VNFairyEngine {
         const asset = this.project.assets.backgrounds.find(b => b.id === titleConfig.background);
         if (asset) src = asset.path;
       }
-      bgElem.style.backgroundImage = `url('${src}')`;
+      bgElem.style.backgroundImage = `url('${playerWorkspace.resolveMedia(src)}')`;
       bgElem.style.filter = "none";
     } else {
       bgElem.style.backgroundImage = "none";
@@ -1025,7 +1035,7 @@ class VNFairyEngine {
           if (asset) videoSrc = asset.path;
         }
         
-        videoEl.src = videoSrc;
+        videoEl.src = playerWorkspace.resolveMedia(videoSrc);
         videoEl.volume = this.sfxVolume;
         
         videoEl.play().catch(err => {
@@ -1064,7 +1074,7 @@ class VNFairyEngine {
     if (useSolidWhiteBackground) {
       stageBg.style.backgroundImage = 'none';
     } else if (bgSrc) {
-      stageBg.style.backgroundImage = `url('${bgSrc}')`;
+      stageBg.style.backgroundImage = `url('${playerWorkspace.resolveMedia(bgSrc)}')`;
     } else {
       const isLightTheme = this.project.config && this.project.config.theme === 'light';
       stageBg.style.backgroundImage = isLightTheme
@@ -1491,7 +1501,7 @@ class VNFairyEngine {
 
         if (spritePath && !isNonVisual) {
           const img = slot.querySelector('.char-sprite');
-          img.src = spritePath;
+          img.src = playerWorkspace.resolveMedia(spritePath);
           img.style.transform = `scale(${scale})`;
           img.style.transformOrigin = 'bottom center';
 
@@ -1898,7 +1908,7 @@ class VNFairyEngine {
           if (asset) fileSrc = asset.path;
         }
         if (fileSrc) {
-          const sfx = new Audio(fileSrc);
+          const sfx = new Audio(playerWorkspace.resolveMedia(fileSrc));
           sfx.volume = this.sfxVolume;
           sfx.play().catch(err => {
             console.warn("Failed to play custom ending SFX: " + fileSrc, err);
@@ -1969,7 +1979,7 @@ class VNFairyEngine {
         const asset = this.project.assets.backgrounds.find(b => b.id === creditsConfig.background);
         if (asset) bgSrc = asset.path;
       }
-      bgContainer.style.backgroundImage = bgSrc ? `url('${bgSrc}')` : "none";
+      bgContainer.style.backgroundImage = bgSrc ? `url('${playerWorkspace.resolveMedia(bgSrc)}')` : "none";
       bgContainer.style.opacity = creditsConfig.noDimming ? "1.0" : "0.4";
     } else {
       bgContainer.style.backgroundImage = "none";
@@ -2134,7 +2144,7 @@ class VNFairyEngine {
       const defaultBackground = isLightTheme
         ? 'linear-gradient(135deg, #ffffff, #e8edf4)'
         : 'linear-gradient(135deg, #1e293b, #0f172a)';
-      stageBg.style.backgroundImage = useSolidWhiteBackground ? 'none' : (bgSrc ? `url('${bgSrc}')` : defaultBackground);
+      stageBg.style.backgroundImage = useSolidWhiteBackground ? 'none' : (bgSrc ? `url('${playerWorkspace.resolveMedia(bgSrc)}')` : defaultBackground);
 
       // Play music (backtrace if the current scene has "Continue BGM" / no bgm defined)
       const activeBGM = this.findActiveBGMForScene(this.currentSceneId);
@@ -2397,6 +2407,10 @@ class VNFairyEngine {
     // Standalone fallback drop zone
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('project-file-input');
+    document.getElementById('btn-open-project-file')?.addEventListener('click', () => {
+      document.getElementById('projects-portal').classList.add('hidden');
+      document.getElementById('fallback-loader').classList.remove('hidden');
+    });
 
     dropZone.ondragover = (e) => {
       e.preventDefault();
@@ -3033,7 +3047,7 @@ class VNFairyEngine {
         const preview = slot.preview || {};
         const previewCharacters = Array.isArray(preview.characters) ? preview.characters : [];
         if (preview.bg) {
-          card.style.backgroundImage = `url('${preview.bg}')`;
+          card.style.backgroundImage = `url('${playerWorkspace.resolveMedia(preview.bg)}')`;
         } else if (!previewCharacters.length) {
           card.innerHTML += `<div class="save-slot-empty-label">SAVED</div>`;
         }
@@ -3046,7 +3060,7 @@ class VNFairyEngine {
             characterSlot.className = `save-slot-character-slot ${character.position}${character.dimmed ? ' is-dimmed' : ''}`;
             const image = document.createElement('img');
             image.className = 'save-slot-character';
-            image.src = character.path;
+            image.src = playerWorkspace.resolveMedia(character.path);
             image.alt = '';
             const scale = Number(character.scale);
             image.style.transform = `scale(${Number.isFinite(scale) && scale > 0 ? scale : 1})`;
@@ -3289,7 +3303,7 @@ class VNFairyEngine {
 
   loadSettings() {
     let raw = localStorage.getItem(this.settingsKey());
-    if (!raw && this.project && this.project.title) {
+    if (!raw && !this.workspaceScope && this.project && this.project.title) {
       raw = localStorage.getItem(`vnfairy_settings_${this.project.title}`);
       if (raw) localStorage.setItem(this.settingsKey(), raw);
     }
@@ -3509,7 +3523,7 @@ class VNFairyEngine {
 
         if (isUnlocked) {
           card.classList.add('unlocked');
-          card.style.backgroundImage = `url('${asset.path}')`;
+          card.style.backgroundImage = `url('${playerWorkspace.resolveMedia(asset.path)}')`;
           card.innerHTML = `<div class="gallery-card-name">${asset.name}</div>`;
           card.onclick = () => this.previewGalleryAsset(asset.path);
         } else {
@@ -3537,7 +3551,7 @@ class VNFairyEngine {
     const overlay = document.getElementById('gallery-preview-overlay');
     const img = document.getElementById('gallery-preview-img');
     if (!overlay || !img) return;
-    img.src = path;
+    img.src = playerWorkspace.resolveMedia(path);
     overlay.classList.remove('hidden');
 
     const closeBtn = document.getElementById('btn-gallery-preview-close');
