@@ -6,7 +6,7 @@ VNFairy lets you create, design, play, and package visual novels in your browser
 
 **Current release: 2.0.0**
 
-[Open the visual docs](docs/index.html) · [Download a release](https://github.com/coderkei/VNFairy/releases) · [Report an issue](https://github.com/coderkei/VNFairy/issues)
+[Open the Designer](https://coderkei.github.io/vnfairy/app/editor.html) · [Open the Player](https://coderkei.github.io/vnfairy/app/) · [Read the visual docs](https://coderkei.github.io/vnfairy/) · [Download a release](https://github.com/coderkei/VNFairy/releases) · [Report an issue](https://github.com/coderkei/VNFairy/issues)
 
 ## Screenshots
 
@@ -29,7 +29,7 @@ More interface and player views are available in the [screenshots](screenshots) 
 
 ### Run on static hosting
 
-Serve the repository root as a static site, then open `editor.html` for the Designer or `index.html` for the Player. For GitHub Pages, select **Deploy from a branch** and **/ (root)** in Pages settings. No install or build command is needed. Only publish files you want publicly accessible; keep your project workspace separate from the site source.
+Open the hosted Designer or Player using the links above. To publish your own copy on GitHub Pages, set **Settings → Pages → Source** to **GitHub Actions** and run the [Pages workflow](.github/workflows/pages.yml). It publishes the docs at the site root and the app under `app/`. On other static hosts, serve the repository's frontend files and open `editor.html` for the Designer or `index.html` for the Player.
 
 - **Folder storage:** On HTTPS or localhost, a browser with folder access offers **Choose folder**. Select a dedicated folder to hold your stories. VNFairy saves a project subfolder with `project.json` and media under `assets/` in that folder. If permission expires, use **Reconnect folder**.
 - **Browser storage:** In Firefox and other browsers without the folder picker, projects and media are saved in the current browser. Use **Import .vnfairy** and **Export source** to back up your work or move it between browsers, folders, and the Node server. Clearing site data removes projects stored in the browser.
