@@ -1,0 +1,37 @@
+name: Publish VNFairy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/configure-pages@v5
+
+      - name: Stage docs and app
+        run: |
+          mkdir -p public/app
+          cp -R docs/. public/
+          cp editor.html index.html OFL.txt public/app/
+          cp -R css js shared public/app/
+          sed -i 's|href="../editor.html"|href="./app/editor.html"|g; s|href="../index.html"|href="./app/"|g' public/index.html
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+
+      - uses: actions/deploy-pages@v4
+        id: deployment
